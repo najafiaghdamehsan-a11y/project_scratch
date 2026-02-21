@@ -13,8 +13,10 @@ add_executable(project_scratch
         src/model/model.cpp
         src/io/serializer.cpp
         src/engine/runtime.cpp
+	    src/engine/safety.cpp
         src/ui/app.cpp
 )
 
 target_include_directories(project_scratch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(project_scratch PRIVATE SDL2::SDL2 SDL2_image::SDL2_image)
+
