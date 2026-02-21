@@ -21,6 +21,8 @@ extern "C" {
         Sprite sprites[MAX_SPRITES];
         int sprite_count;
         int active_sprite_index;
+
+        int dirty;   // NEW: 1 if unsaved edits exist
     } Project;
 
     void model_init(Project* p);
