@@ -7,65 +7,70 @@
 extern "C" {
 #endif
 
-#define BE_MAX_BLOCKS 512
+#define MAX_WORKSPACE_BLOCKS 512
 
-    typedef enum BE_Category {
-        BE_CAT_MOTION = 0,
-        BE_CAT_LOOKS,
-        BE_CAT_SOUND,
-        BE_CAT_EVENTS,
-        BE_CAT_CONTROL,
-        BE_CAT_SENSING,
-        BE_CAT_OPERATORS,
-        BE_CAT_VARIABLES,
-        BE_CAT_COUNT
-    } BE_Category;
+    typedef enum BlockCategory {
+        CAT_MOTION = 0,
+        CAT_LOOKS,
+        CAT_SOUND,
+        CAT_EVENTS,
+        CAT_CONTROL,
+        CAT_SENSING,
+        CAT_OPERATORS,
+        CAT_VARIABLES,
+        CAT_COUNT
+    } BlockCategory;
 
-    typedef enum BE_Opcode {
-        BE_OP_MOVE_STEPS = 1,
-        BE_OP_TURN_DEG,
-        BE_OP_GOTO_XY
-    } BE_Opcode;
+    typedef enum BlockType {
+        BLK_MOVE_STEPS = 0,
+        BLK_TURN_DEG,
+        BLK_GOTO_XY,
+        BLK_COUNT
+    } BlockType;
 
-    typedef struct BE_BlockInstance {
+    typedef struct BlockInstance {
         uint64_t id;
-        int opcode;     // BE_Opcode
-        int a;          // arg0
-        int b;          // arg1 (used by goto x/y)
-        int x, y;       // screen-space position
-        int w, h;       // size
-        int category;   // BE_Category (for color)
-    } BE_BlockInstance;
+        BlockType type;
+        int a;          // argument 1 (steps / degrees / x)
+        int b;          // argument 2 (y)
+        SDL_Rect r;     // position in workspace
+    } BlockInstance;
 
     typedef struct BlockEditor {
-        // Layout (screen-space)
-        SDL_Rect rect_cat;
-        SDL_Rect rect_palette;
-        SDL_Rect rect_workspace;
+        // layout
+        SDL_Rect cat_r;
+        SDL_Rect palette_r;
+        SDL_Rect work_r;
 
-        int selected_category;   // BE_Category
-        int palette_scroll_y;    // (optional, for wheel later)
+        // state
+        BlockCategory cat;
 
-        // Workspace blocks
-        BE_BlockInstance blocks[BE_MAX_BLOCKS];
+        // workspace blocks
+        BlockInstance blocks[MAX_WORKSPACE_BLOCKS];
         int block_count;
-        uint64_t next_id;
 
-        // Drag state
-        int dragging_index;      // -1 none
+        int selected_index;   // -1 = none
+
+        // dragging
+        int dragging;         // 0/1
+        int drag_index;       // index in blocks[]
+        int drag_from_palette;// 0/1
         int drag_off_x;
         int drag_off_y;
 
-        // Hover state (optional)
-        int hover_palette_index; // -1 none
-        int hover_block_index;   // -1 none
+        uint64_t next_id;
     } BlockEditor;
 
     void block_editor_init(BlockEditor* be);
-    void block_editor_set_layout(BlockEditor* be, SDL_Rect cat, SDL_Rect palette, SDL_Rect workspace);
+    void block_editor_set_layout(BlockEditor* be, SDL_Rect cat_r, SDL_Rect palette_r, SDL_Rect work_r);
 
     void block_editor_handle_event(BlockEditor* be, const SDL_Event* e);
-    void block_editor_draw(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font);
+
+    // render (draws category list + palette + workspace blocks + dotted grid)
+    void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font);
+
+    int  block_editor_block_count(const BlockEditor* be);
+    const BlockInstance* block_editor_blocks(const BlockEditor* be);
 
 #ifdef __cplusplus
 }
