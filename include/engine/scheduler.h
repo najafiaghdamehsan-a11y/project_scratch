@@ -8,27 +8,15 @@ extern "C" {
 
     typedef enum OpCode {
         OP_NOP = 0,
-
-        // Motion
-        OP_MOVE_STEPS,     // a = steps
-        OP_TURN_DEG,       // a = degrees (positive = turn right)
-
-        // Control
-        OP_WAIT_MS,        // a = ms
-        OP_REPEAT_BEGIN,   // count = repeat count, jump = index of matching END
-        OP_REPEAT_END,     // jump = index of matching BEGIN
-        OP_FOREVER_BEGIN,  // jump = index of matching END
-        OP_FOREVER_END,    // jump = index of matching BEGIN
-
+        OP_MOVE_X,
+        OP_WAIT_MS,
         OP_END
     } OpCode;
 
     typedef struct Instr {
-        uint64_t id;   // debug highlight id
+        uint64_t id;
         OpCode op;
-        double a;      // numeric parameter
-        int jump;      // for loops: where to jump
-        int count;     // for repeat begin: how many times
+        double a;
     } Instr;
 
     typedef struct Thread {
@@ -36,24 +24,22 @@ extern "C" {
         int pc;
         uint64_t wake_ms;
 
-        // Repeat stack (supports nested repeats)
-        int rep_left[32];
-        int rep_begin_pc[32];
-        int rep_top;
+        // which script this thread is running
+        const Instr* code;
+        int code_len;
     } Thread;
 
     typedef struct Scheduler {
-        Thread t;             // 1 thread for now
-        const Instr* code;
-        int code_len;
+        Thread threads[16];
+        int rr_index; // round-robin pointer
     } Scheduler;
 
     void scheduler_init(Scheduler* s);
     void scheduler_start_demo(Scheduler* s);
     void scheduler_stop_all(Scheduler* s);
 
-    // Executes at most ONE instruction per call.
-    // Returns 1 if executed, 0 if nothing executed (waiting/inactive).
+    // Executes at most ONE instruction across all threads (round-robin).
+    // Returns 1 if executed something, 0 if nothing executed (all waiting/inactive).
     int scheduler_step_one(Scheduler* s, Project* p, uint64_t now_ms, uint64_t* out_block_id, int* budget);
 
 #ifdef __cplusplus

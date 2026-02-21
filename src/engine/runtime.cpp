@@ -2,6 +2,14 @@
 #include "engine/safety.h"
 #include "core/log.h"
 
+// NEW: works with multi-thread scheduler (threads[16])
+static int sched_any_active(const Scheduler* s) {
+    for (int i = 0; i < 16; i++) {
+        if (s->threads[i].active) return 1;
+    }
+    return 0;
+}
+
 void runtime_init(Runtime* r) {
     r->cycle = 0;
     r->paused = 0;
@@ -56,33 +64,32 @@ void runtime_tick(Runtime* r, Project* p) {
 
     // step-by-step gate
     if (r->step_mode && !r->do_step) return;
-    const int max_steps = (r->step_mode ? 1 : 64); // normal mode can do a few per frame
+    const int max_steps = (r->step_mode ? 1 : 64);
     r->do_step = 0;
 
     // 3) execute up to max_steps, with watchdog budget
-    uint64_t now = time_now_ms();
-    int budget = 2000; // total allowed block-steps this frame
+    const uint64_t now = time_now_ms();
+    int budget = 2000;
     uint64_t bid = 0;
 
     int executed_any = 0;
+
     for (int i = 0; i < max_steps; i++) {
         bid = 0;
         int did = scheduler_step_one(&r->sched, p, now, &bid, &budget);
-        if (!did) break;           // waiting or inactive
+
+        // If no instruction ran, it might be because:
+        // - all threads are waiting
+        // - OR all threads are inactive
+        // We break and decide below.
+        if (!did) break;
+
         executed_any = 1;
-
-        r->current_block_id = bid; // last executed block
+        r->current_block_id = bid;
         r->cycle++;
-
-        // If scheduler finished, stop running automatically
-        if (!r->sched.t.active) {
-            r->running = 0;
-            log_write(LogRecord{r->cycle, 0, "CTRL", "ScriptEnd", "stop", LOG_INFO});
-            break;
-        }
     }
 
-    // 4) watchdog exhausted (budget hit)
+    // 4) watchdog exhausted
     if (budget <= 0) {
         r->running = 0;
         r->current_block_id = 0;
@@ -91,7 +98,15 @@ void runtime_tick(Runtime* r, Project* p) {
         return;
     }
 
-    // Optional: log only when something executed (keeps console cleaner)
+    // 5) If ALL threads finished, stop running automatically
+    if (!sched_any_active(&r->sched)) {
+        r->running = 0;
+        r->current_block_id = 0;
+        log_write(LogRecord{r->cycle, 0, "CTRL", "ScriptEnd", "stop", LOG_INFO});
+        return;
+    }
+
+    // Optional: log only when something executed
     if (executed_any) {
         log_write(LogRecord{r->cycle, 0, "EXEC", "Block", "executed", LOG_INFO});
     }
