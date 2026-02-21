@@ -16,6 +16,7 @@ add_executable(project_scratch
 	    src/engine/safety.cpp
 		src/engine/scheduler.cpp
 		src/engine/value.cpp
+		src/engine/vars.cpp
         src/ui/app.cpp
 )
 

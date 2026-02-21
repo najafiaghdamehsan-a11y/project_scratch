@@ -23,12 +23,16 @@ void runtime_init(Runtime* r) {
 
     scheduler_init(&r->sched);
 
+    // key event plumbing
     r->key_pending = 0;
     r->last_key = 0;
 
-    // NEW
+    // broadcast plumbing
     r->msg_pending = 0;
     r->msg_id = 0;
+
+    // NEW: variables
+    varstore_init(&r->vars);
 }
 
 void runtime_set_paused(Runtime* r, int paused) { r->paused = paused; }
@@ -49,6 +53,9 @@ void runtime_green_flag(Runtime* r) {
     r->msg_pending = 0;
     r->msg_id = 0;
 
+    // NEW: reset variables each run (Scratch-like)
+    varstore_clear(&r->vars);
+
     scheduler_start_demo(&r->sched);
 
     log_write(LogRecord{0, 0, "EVENT", "GreenFlag", "start", LOG_INFO});
@@ -66,14 +73,13 @@ void runtime_post_key(Runtime* r, int keycode) {
     r->key_pending = 1;
 }
 
-// NEW
 void runtime_post_broadcast(Runtime* r, int msg_id) {
     r->msg_id = msg_id;
     r->msg_pending = 1;
 }
 
 void runtime_tick(Runtime* r, Project* p) {
-    // 0) key event handling (log + optional triggers)
+    // 0) key event handling
     if (r->key_pending) {
         int k = r->last_key;
 
@@ -82,8 +88,7 @@ void runtime_tick(Runtime* r, Project* p) {
         std::snprintf(keybuf, sizeof(keybuf), "%d", k);
         log_write(LogRecord{r->cycle, 0, "EVENT", "KeyDown", keybuf, LOG_INFO});
 
-        // Demo trigger: press 'b' to broadcast message 1
-        // SDL_Keycode for 'b' is 98 (same as ASCII)
+        // Demo trigger: press 'b' (98) -> broadcast msg 1
         if (k == 98) {
             runtime_post_broadcast(r, 1);
             log_write(LogRecord{r->cycle, 0, "EVENT", "BroadcastRequest", "msg=1", LOG_INFO});
@@ -97,7 +102,7 @@ void runtime_tick(Runtime* r, Project* p) {
         r->key_pending = 0;
     }
 
-    // 0.5) broadcast processing (log + trigger receivers)
+    // 0.5) broadcast processing
     if (r->msg_pending) {
         char msgbuf[32];
         std::snprintf(msgbuf, sizeof(msgbuf), "msg=%d", r->msg_id);
@@ -142,8 +147,10 @@ void runtime_tick(Runtime* r, Project* p) {
 
     for (int i = 0; i < max_steps; i++) {
         bid = 0;
-        int did = scheduler_step_one(&r->sched, p, now, &bid, &budget);
-        if (!did) break; // all waiting/inactive
+
+        // NEW SIGNATURE: pass &r->vars
+        int did = scheduler_step_one(&r->sched, p, &r->vars, now, &bid, &budget);
+        if (!did) break;
 
         executed_any = 1;
         r->current_block_id = bid;
