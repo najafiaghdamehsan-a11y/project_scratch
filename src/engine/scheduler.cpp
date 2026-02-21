@@ -1,6 +1,7 @@
 #include "engine/scheduler.h"
 #include "engine/safety.h"
 #include <cmath>
+#include <cstdint>
 
 // Scratch stage size (logical coords)
 static const double STAGE_HALF_W = 240.0;
@@ -77,6 +78,37 @@ static int eval_cond(CondCode c, double a, const Project* p) {
     }
 }
 
+// ---- Value stack helpers (per thread) ----
+static void stack_reset(Thread* t) {
+    t->sp = 0;
+}
+
+static int stack_push(Thread* t, Value v) {
+    if (t->sp >= 64) return 0;
+    t->stack[t->sp++] = v;
+    return 1;
+}
+
+static int stack_pop(Thread* t, Value* out) {
+    if (t->sp <= 0) return 0;
+    if (out) *out = t->stack[--t->sp];
+    else (void)t->stack[--t->sp];
+    return 1;
+}
+
+static Value stack_pop_or_num(Thread* t, double fallback) {
+    Value v;
+    if (!stack_pop(t, &v)) return value_num(fallback);
+    return v;
+}
+
+static Value stack_pop_or_bool(Thread* t, int fallback) {
+    Value v;
+    if (!stack_pop(t, &v)) return value_bool(fallback);
+    return v;
+}
+
+// ---- thread start ----
 static void thread_start(Thread* t, const Instr* code, int len) {
     t->active = 1;
     t->pc = 0;
@@ -84,9 +116,12 @@ static void thread_start(Thread* t, const Instr* code, int len) {
     t->code = code;
     t->code_len = len;
     t->rep_top = 0;
+    stack_reset(t);
 }
 
-// -------- GREEN FLAG DEMO SCRIPTS --------
+// ============================================================
+// DEMO SCRIPTS (Green Flag)
+
 
 // Script A: forever { move 8; bounce; wait 20 }
 static const Instr SCRIPT_A[] = {
@@ -94,7 +129,7 @@ static const Instr SCRIPT_A[] = {
     {102, OP_MOVE_STEPS,    8,0, 0,0, COND_TRUE}, // idx 1
     {103, OP_IF_ON_EDGE_BOUNCE, 0,0, 0,0, COND_TRUE}, // idx 2
     {104, OP_WAIT_MS,      20,0, 0,0, COND_TRUE}, // idx 3
-    {105, OP_FOREVER_END,   0,0, 0,0, COND_TRUE}, // idx 4 (jump=0)
+    {105, OP_FOREVER_END,   0,0, 0,0, COND_TRUE}, // idx 4 (jump=0 => loop to start)
 };
 
 // Script B: repeat 20 { goto random; set y 0; wait 150 } end
@@ -107,7 +142,9 @@ static const Instr SCRIPT_B[] = {
     {206, OP_END,          0,0, 0,  0, COND_TRUE}, // idx 5
 };
 
-// -------- KEY SCRIPTS --------
+
+// KEY SCRIPTS (when key pressed)
+// ============================================================
 
 // Space (32): forever bounce mover
 static const Instr KEY_SPACE[] = {
@@ -115,7 +152,7 @@ static const Instr KEY_SPACE[] = {
     {302, OP_MOVE_STEPS,    6,0, 0,0, COND_TRUE}, // idx 1
     {303, OP_IF_ON_EDGE_BOUNCE, 0,0, 0,0, COND_TRUE}, // idx 2
     {304, OP_WAIT_MS,      15,0, 0,0, COND_TRUE}, // idx 3
-    {305, OP_FOREVER_END,   0,0, 0,0, COND_TRUE}, // idx 4 (jump=0)
+    {305, OP_FOREVER_END,   0,0, 0,0, COND_TRUE}, // idx 4
 };
 
 // 'a' (97): repeat turn+move
@@ -128,17 +165,31 @@ static const Instr KEY_A[] = {
     {406, OP_END,          0,0, 0,  0, COND_TRUE}, // idx 5
 };
 
-// -------- BROADCAST RECEIVER SCRIPTS --------
-// msg 1: repeat 30 { turn 12; move 6; bounce; wait 10 } end
-static const Instr RECV_MSG1[] = {
-    {501, OP_REPEAT_BEGIN, 0,0, 6, 30, COND_TRUE},     // idx 0, jump->6
-    {502, OP_TURN_DEG,    12,0, 0,  0, COND_TRUE},     // idx 1
-    {503, OP_MOVE_STEPS,   6,0, 0,  0, COND_TRUE},     // idx 2
-    {504, OP_IF_ON_EDGE_BOUNCE, 0,0, 0,0, COND_TRUE},  // idx 3
-    {505, OP_WAIT_MS,     10,0, 0,  0, COND_TRUE},     // idx 4
-    {506, OP_REPEAT_END,   0,0, 0,  0, COND_TRUE},     // idx 5
-    {507, OP_END,          0,0, 0,  0, COND_TRUE},     // idx 6
+// 'c' (99): Operators demo (random range + change x pop)
+static const Instr KEY_C[] = {
+    {601, OP_REPEAT_BEGIN,  0,0, 6, 120, COND_TRUE},   // idx 0, jump->6
+    {602, OP_RANDOM_RANGE, -8,8, 0,   0,  COND_TRUE},  // idx 1 push rand[-8,8]
+    {603, OP_CHANGE_X_POP,  0,0, 0,   0,  COND_TRUE},  // idx 2 pop -> change x
+    {604, OP_IF_ON_EDGE_BOUNCE, 0,0,0,0, COND_TRUE},   // idx 3
+    {605, OP_WAIT_MS,      15,0, 0,   0,  COND_TRUE},  // idx 4
+    {606, OP_REPEAT_END,    0,0, 0,   0,  COND_TRUE},  // idx 5
+    {607, OP_END,           0,0, 0,   0,  COND_TRUE},  // idx 6
 };
+
+// BROADCAST RECEIVERS (when I receive msg)
+
+// msg 1: Operators demo receiver (random jitter)
+static const Instr RECV_MSG1[] = {
+    {501, OP_REPEAT_BEGIN,  0,0, 6, 160, COND_TRUE},   // idx 0, jump->6
+    {502, OP_RANDOM_RANGE, -12,12, 0,   0,  COND_TRUE},// idx 1 push rand[-12,12]
+    {503, OP_CHANGE_X_POP,  0,0, 0,   0,  COND_TRUE},  // idx 2 pop -> change x
+    {504, OP_IF_ON_EDGE_BOUNCE, 0,0,0,0, COND_TRUE},   // idx 3 bounce
+    {505, OP_WAIT_MS,      10,0, 0,   0,  COND_TRUE},  // idx 4
+    {506, OP_REPEAT_END,    0,0, 0,   0,  COND_TRUE},  // idx 5
+    {507, OP_END,           0,0, 0,   0,  COND_TRUE},  // idx 6
+};
+
+// Scheduler lifecycle
 
 void scheduler_init(Scheduler* s) {
     for (int i = 0; i < 16; i++) {
@@ -148,6 +199,7 @@ void scheduler_init(Scheduler* s) {
         s->threads[i].code = nullptr;
         s->threads[i].code_len = 0;
         s->threads[i].rep_top = 0;
+        stack_reset(&s->threads[i]);
     }
     s->rr_index = 0;
 }
@@ -160,6 +212,7 @@ void scheduler_stop_all(Scheduler* s) {
         s->threads[i].code = nullptr;
         s->threads[i].code_len = 0;
         s->threads[i].rep_top = 0;
+        stack_reset(&s->threads[i]);
     }
 }
 
@@ -183,13 +236,18 @@ void scheduler_start_on_key(Scheduler* s, int keycode) {
     int idx = find_free_thread(s);
     if (idx < 0) return;
 
-    // ASCII-like SDL_Keycode: space=32, 'a'=97
+    // SDL_Keycode values for letters/spaces match ASCII:
+    // space=32, 'a'=97, 'c'=99
     if (keycode == 32) { // SPACE
         thread_start(&s->threads[idx], KEY_SPACE, (int)(sizeof(KEY_SPACE) / sizeof(KEY_SPACE[0])));
         return;
     }
     if (keycode == 97) { // 'a'
         thread_start(&s->threads[idx], KEY_A, (int)(sizeof(KEY_A) / sizeof(KEY_A[0])));
+        return;
+    }
+    if (keycode == 99) { // 'c'
+        thread_start(&s->threads[idx], KEY_C, (int)(sizeof(KEY_C) / sizeof(KEY_C[0])));
         return;
     }
 }
@@ -202,16 +260,19 @@ void scheduler_broadcast(Scheduler* s, int msg_id) {
         thread_start(&s->threads[idx], RECV_MSG1, (int)(sizeof(RECV_MSG1) / sizeof(RECV_MSG1[0])));
         return;
     }
-
     // unknown msg -> ignore
 }
+
+// Interpreter (one instruction per step)
 
 static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_block_id, int* budget) {
     if (!t->active || !t->code || t->code_len <= 0) return 0;
 
+    // waiting?
     if (t->wake_ms != 0 && now_ms < t->wake_ms) return 0;
     t->wake_ms = 0;
 
+    // watchdog budget
     if (!watchdog_allow_step(budget)) return 0;
 
     if (t->pc < 0 || t->pc >= t->code_len) {
@@ -225,7 +286,9 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
     Sprite* spr = (p && p->sprite_count > 0) ? &p->sprites[0] : nullptr;
 
     switch (in.op) {
+        // -------------------------
         // Motion
+        // -------------------------
         case OP_MOVE_STEPS:
             if (spr) sprite_move_steps(spr, in.a);
             return 1;
@@ -261,7 +324,9 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
             if (spr) sprite_bounce_if_needed(spr);
             return 1;
 
+        // -------------------------
         // Control
+        // -------------------------
         case OP_WAIT_MS:
             t->wake_ms = now_ms + (uint64_t)in.a;
             return 1;
@@ -289,7 +354,6 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
             return 1;
         }
 
-        // Forever
         case OP_FOREVER_BEGIN:
             return 1;
 
@@ -300,7 +364,9 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
             return 1;
         }
 
-        // IF / ELSE (kept for later, not used in broadcast demo above)
+        // -------------------------
+        // IF / ELSE (non-stack)
+        // -------------------------
         case OP_IF_BEGIN: {
             int ok = eval_cond(in.cond, in.a, p);
             if (!ok) t->pc = in.jump;
@@ -314,6 +380,112 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
         case OP_ENDIF:
             return 1;
 
+        // -------------------------
+        // Operators / Stack VM
+        // -------------------------
+        case OP_PUSH_NUM:
+            stack_push(t, value_num(in.a));
+            return 1;
+
+        case OP_RANDOM_RANGE: {
+            double lo = in.a;
+            double hi = in.b;
+            double r = rand_range(lo, hi);
+            stack_push(t, value_num(r));
+            return 1;
+        }
+
+        case OP_ADD: {
+            double b = value_as_num(stack_pop_or_num(t, 0.0));
+            double a = value_as_num(stack_pop_or_num(t, 0.0));
+            stack_push(t, value_num(a + b));
+            return 1;
+        }
+
+        case OP_SUB: {
+            double b = value_as_num(stack_pop_or_num(t, 0.0));
+            double a = value_as_num(stack_pop_or_num(t, 0.0));
+            stack_push(t, value_num(a - b));
+            return 1;
+        }
+
+        case OP_MUL: {
+            double b = value_as_num(stack_pop_or_num(t, 0.0));
+            double a = value_as_num(stack_pop_or_num(t, 0.0));
+            stack_push(t, value_num(a * b));
+            return 1;
+        }
+
+        case OP_DIV: {
+            double b = value_as_num(stack_pop_or_num(t, 1.0));
+            double a = value_as_num(stack_pop_or_num(t, 0.0));
+            if (b == 0.0) stack_push(t, value_num(0.0));
+            else stack_push(t, value_num(a / b));
+            return 1;
+        }
+
+        case OP_GT: {
+            double b = value_as_num(stack_pop_or_num(t, 0.0));
+            double a = value_as_num(stack_pop_or_num(t, 0.0));
+            stack_push(t, value_bool(a > b));
+            return 1;
+        }
+
+        case OP_LT: {
+            double b = value_as_num(stack_pop_or_num(t, 0.0));
+            double a = value_as_num(stack_pop_or_num(t, 0.0));
+            stack_push(t, value_bool(a < b));
+            return 1;
+        }
+
+        case OP_EQ: {
+            double b = value_as_num(stack_pop_or_num(t, 0.0));
+            double a = value_as_num(stack_pop_or_num(t, 0.0));
+            stack_push(t, value_bool(a == b));
+            return 1;
+        }
+
+        case OP_AND: {
+            int b = value_as_bool(stack_pop_or_bool(t, 0));
+            int a = value_as_bool(stack_pop_or_bool(t, 0));
+            stack_push(t, value_bool(a && b));
+            return 1;
+        }
+
+        case OP_OR: {
+            int b = value_as_bool(stack_pop_or_bool(t, 0));
+            int a = value_as_bool(stack_pop_or_bool(t, 0));
+            stack_push(t, value_bool(a || b));
+            return 1;
+        }
+
+        case OP_NOT: {
+            int a = value_as_bool(stack_pop_or_bool(t, 0));
+            stack_push(t, value_bool(!a));
+            return 1;
+        }
+
+        case OP_IF_POP: {
+            int cond = value_as_bool(stack_pop_or_bool(t, 0));
+            if (!cond) t->pc = in.jump;
+            return 1;
+        }
+
+        case OP_CHANGE_X_POP: {
+            double dx = value_as_num(stack_pop_or_num(t, 0.0));
+            if (spr) spr->x = clampd(spr->x + dx, -STAGE_HALF_W, STAGE_HALF_W);
+            return 1;
+        }
+
+        case OP_CHANGE_Y_POP: {
+            double dy = value_as_num(stack_pop_or_num(t, 0.0));
+            if (spr) spr->y = clampd(spr->y + dy, -STAGE_HALF_H, STAGE_HALF_H);
+            return 1;
+        }
+
+        // -------------------------
+        // End
+        // -------------------------
         case OP_END:
             t->active = 0;
             return 1;
@@ -324,6 +496,7 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
 }
 
 int scheduler_step_one(Scheduler* s, Project* p, uint64_t now_ms, uint64_t* out_block_id, int* budget) {
+    // round-robin: find one runnable thread
     for (int attempts = 0; attempts < 16; attempts++) {
         int idx = (s->rr_index + attempts) % 16;
         Thread* t = &s->threads[idx];
