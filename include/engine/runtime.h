@@ -19,9 +19,13 @@ extern "C" {
 
         Scheduler sched;          // scheduler state
 
-        // NEW: key event plumbing
+        // Key event plumbing
         int key_pending;          // 1 => a key event waiting
         int last_key;             // last keycode (SDL_Keycode as int)
+
+        // NEW: broadcast plumbing
+        int msg_pending;          // 1 => broadcast waiting
+        int msg_id;               // message id
     } Runtime;
 
     void runtime_init(Runtime* r);
@@ -34,8 +38,11 @@ extern "C" {
     int  runtime_is_running(const Runtime* r);
     uint64_t runtime_current_block(const Runtime* r);
 
-    // NEW: UI -> Engine event
+    // UI -> Engine key event
     void runtime_post_key(Runtime* r, int keycode);
+
+    // NEW: Engine broadcast event (UI/model later)
+    void runtime_post_broadcast(Runtime* r, int msg_id);
 
     void runtime_tick(Runtime* r, Project* p);
 

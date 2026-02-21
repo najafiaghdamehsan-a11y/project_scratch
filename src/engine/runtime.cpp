@@ -23,9 +23,12 @@ void runtime_init(Runtime* r) {
 
     scheduler_init(&r->sched);
 
-    // NEW
     r->key_pending = 0;
     r->last_key = 0;
+
+    // NEW
+    r->msg_pending = 0;
+    r->msg_id = 0;
 }
 
 void runtime_set_paused(Runtime* r, int paused) { r->paused = paused; }
@@ -40,6 +43,12 @@ void runtime_green_flag(Runtime* r) {
     r->do_step = 0;
     r->current_block_id = 0;
 
+    r->key_pending = 0;
+    r->last_key = 0;
+
+    r->msg_pending = 0;
+    r->msg_id = 0;
+
     scheduler_start_demo(&r->sched);
 
     log_write(LogRecord{0, 0, "EVENT", "GreenFlag", "start", LOG_INFO});
@@ -52,19 +61,53 @@ void runtime_stop_all(Runtime* r) {
 int runtime_is_running(const Runtime* r) { return r->running; }
 uint64_t runtime_current_block(const Runtime* r) { return r->current_block_id; }
 
-// NEW
 void runtime_post_key(Runtime* r, int keycode) {
     r->last_key = keycode;
     r->key_pending = 1;
 }
 
+// NEW
+void runtime_post_broadcast(Runtime* r, int msg_id) {
+    r->msg_id = msg_id;
+    r->msg_pending = 1;
+}
+
 void runtime_tick(Runtime* r, Project* p) {
-    // NEW: log key events even if paused/stopped
+    // 0) key event handling (log + optional triggers)
     if (r->key_pending) {
         int k = r->last_key;
-        // ... log ...
-        if (r->running) scheduler_start_on_key(&r->sched, k);
+
+        // log keycode
+        char keybuf[32];
+        std::snprintf(keybuf, sizeof(keybuf), "%d", k);
+        log_write(LogRecord{r->cycle, 0, "EVENT", "KeyDown", keybuf, LOG_INFO});
+
+        // Demo trigger: press 'b' to broadcast message 1
+        // SDL_Keycode for 'b' is 98 (same as ASCII)
+        if (k == 98) {
+            runtime_post_broadcast(r, 1);
+            log_write(LogRecord{r->cycle, 0, "EVENT", "BroadcastRequest", "msg=1", LOG_INFO});
+        }
+
+        // Start key scripts only while running (Scratch-like)
+        if (r->running) {
+            scheduler_start_on_key(&r->sched, k);
+        }
+
         r->key_pending = 0;
+    }
+
+    // 0.5) broadcast processing (log + trigger receivers)
+    if (r->msg_pending) {
+        char msgbuf[32];
+        std::snprintf(msgbuf, sizeof(msgbuf), "msg=%d", r->msg_id);
+        log_write(LogRecord{r->cycle, 0, "EVENT", "Broadcast", msgbuf, LOG_INFO});
+
+        if (r->running) {
+            scheduler_broadcast(&r->sched, r->msg_id);
+        }
+
+        r->msg_pending = 0;
     }
 
     // 1) stop all first
@@ -72,6 +115,10 @@ void runtime_tick(Runtime* r, Project* p) {
         r->running = 0;
         r->stop_all = 0;
         r->current_block_id = 0;
+
+        r->msg_pending = 0;
+        r->key_pending = 0;
+
         scheduler_stop_all(&r->sched);
         log_write(LogRecord{r->cycle, 0, "CTRL", "StopAll", "stop", LOG_INFO});
         return;

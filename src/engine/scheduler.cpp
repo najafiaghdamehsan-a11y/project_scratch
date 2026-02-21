@@ -31,8 +31,7 @@ static double rad2deg(double rad) {
     return rad * 180.0 / 3.14159265358979323846;
 }
 
-// Scratch-like direction convention:
-// 0 = up, 90 = right, 180 = down, 270 = left
+// Scratch direction: 0=up, 90=right
 static void sprite_move_steps(Sprite* s, double steps) {
     double d = wrap_angle_deg(s->dir);
     double r = deg2rad(d);
@@ -44,7 +43,6 @@ static void sprite_bounce_if_needed(Sprite* s) {
     double d = wrap_angle_deg(s->dir);
     double r = deg2rad(d);
 
-    // direction vector where dx=sin, dy=cos
     double dx = std::sin(r);
     double dy = std::cos(r);
 
@@ -61,7 +59,6 @@ static void sprite_bounce_if_needed(Sprite* s) {
     if (hit_v) dx = -dx;
     if (hit_h) dy = -dy;
 
-    // convert back: direction = atan2(dx, dy)
     double new_deg = rad2deg(std::atan2(dx, dy));
     s->dir = wrap_angle_deg(new_deg);
 }
@@ -89,20 +86,20 @@ static void thread_start(Thread* t, const Instr* code, int len) {
     t->rep_top = 0;
 }
 
-// -------- DEMO SCRIPTS (Green Flag) --------
-//
-// Script A: forever { move 8; if on edge bounce; wait 20ms }
+// -------- GREEN FLAG DEMO SCRIPTS --------
+
+// Script A: forever { move 8; bounce; wait 20 }
 static const Instr SCRIPT_A[] = {
     {101, OP_FOREVER_BEGIN, 0,0, 0,0, COND_TRUE}, // idx 0
     {102, OP_MOVE_STEPS,    8,0, 0,0, COND_TRUE}, // idx 1
     {103, OP_IF_ON_EDGE_BOUNCE, 0,0, 0,0, COND_TRUE}, // idx 2
     {104, OP_WAIT_MS,      20,0, 0,0, COND_TRUE}, // idx 3
-    {105, OP_FOREVER_END,   0,0, 0,0, COND_TRUE}, // idx 4 (jump set in handler)
+    {105, OP_FOREVER_END,   0,0, 0,0, COND_TRUE}, // idx 4 (jump=0)
 };
 
-// Script B: repeat 20 { goto random; set y 0; wait 150ms } end
+// Script B: repeat 20 { goto random; set y 0; wait 150 } end
 static const Instr SCRIPT_B[] = {
-    {201, OP_REPEAT_BEGIN, 0,0, 5, 20, COND_TRUE}, // idx 0, jump->5
+    {201, OP_REPEAT_BEGIN, 0,0, 6, 20, COND_TRUE}, // idx 0, jump->6
     {202, OP_GOTO_RANDOM,  0,0, 0,  0, COND_TRUE}, // idx 1
     {203, OP_SET_Y,        0,0, 0,  0, COND_TRUE}, // idx 2
     {204, OP_WAIT_MS,    150,0, 0,  0, COND_TRUE}, // idx 3
@@ -110,25 +107,37 @@ static const Instr SCRIPT_B[] = {
     {206, OP_END,          0,0, 0,  0, COND_TRUE}, // idx 5
 };
 
-// -------- KEY SCRIPTS (When key pressed) --------
-//
-// Space (keycode 32): forever bounce mover
+// -------- KEY SCRIPTS --------
+
+// Space (32): forever bounce mover
 static const Instr KEY_SPACE[] = {
     {301, OP_FOREVER_BEGIN, 0,0, 0,0, COND_TRUE}, // idx 0
     {302, OP_MOVE_STEPS,    6,0, 0,0, COND_TRUE}, // idx 1
     {303, OP_IF_ON_EDGE_BOUNCE, 0,0, 0,0, COND_TRUE}, // idx 2
     {304, OP_WAIT_MS,      15,0, 0,0, COND_TRUE}, // idx 3
-    {305, OP_FOREVER_END,   0,0, 0,0, COND_TRUE}, // idx 4
+    {305, OP_FOREVER_END,   0,0, 0,0, COND_TRUE}, // idx 4 (jump=0)
 };
 
-// 'a' (keycode 97): repeat turn+move
+// 'a' (97): repeat turn+move
 static const Instr KEY_A[] = {
-    {401, OP_REPEAT_BEGIN, 0,0, 6, 60, COND_TRUE}, // idx 0 jump->6
+    {401, OP_REPEAT_BEGIN, 0,0, 6, 60, COND_TRUE}, // idx 0, jump->6
     {402, OP_TURN_DEG,    10,0, 0,  0, COND_TRUE}, // idx 1
     {403, OP_MOVE_STEPS,   4,0, 0,  0, COND_TRUE}, // idx 2
     {404, OP_WAIT_MS,     20,0, 0,  0, COND_TRUE}, // idx 3
     {405, OP_REPEAT_END,   0,0, 0,  0, COND_TRUE}, // idx 4
     {406, OP_END,          0,0, 0,  0, COND_TRUE}, // idx 5
+};
+
+// -------- BROADCAST RECEIVER SCRIPTS --------
+// msg 1: repeat 30 { turn 12; move 6; bounce; wait 10 } end
+static const Instr RECV_MSG1[] = {
+    {501, OP_REPEAT_BEGIN, 0,0, 6, 30, COND_TRUE},     // idx 0, jump->6
+    {502, OP_TURN_DEG,    12,0, 0,  0, COND_TRUE},     // idx 1
+    {503, OP_MOVE_STEPS,   6,0, 0,  0, COND_TRUE},     // idx 2
+    {504, OP_IF_ON_EDGE_BOUNCE, 0,0, 0,0, COND_TRUE},  // idx 3
+    {505, OP_WAIT_MS,     10,0, 0,  0, COND_TRUE},     // idx 4
+    {506, OP_REPEAT_END,   0,0, 0,  0, COND_TRUE},     // idx 5
+    {507, OP_END,          0,0, 0,  0, COND_TRUE},     // idx 6
 };
 
 void scheduler_init(Scheduler* s) {
@@ -174,8 +183,7 @@ void scheduler_start_on_key(Scheduler* s, int keycode) {
     int idx = find_free_thread(s);
     if (idx < 0) return;
 
-    // SDL_Keycode values for letters/spaces match ASCII:
-    // 'a' = 97, space = 32
+    // ASCII-like SDL_Keycode: space=32, 'a'=97
     if (keycode == 32) { // SPACE
         thread_start(&s->threads[idx], KEY_SPACE, (int)(sizeof(KEY_SPACE) / sizeof(KEY_SPACE[0])));
         return;
@@ -186,14 +194,24 @@ void scheduler_start_on_key(Scheduler* s, int keycode) {
     }
 }
 
+void scheduler_broadcast(Scheduler* s, int msg_id) {
+    int idx = find_free_thread(s);
+    if (idx < 0) return;
+
+    if (msg_id == 1) {
+        thread_start(&s->threads[idx], RECV_MSG1, (int)(sizeof(RECV_MSG1) / sizeof(RECV_MSG1[0])));
+        return;
+    }
+
+    // unknown msg -> ignore
+}
+
 static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_block_id, int* budget) {
     if (!t->active || !t->code || t->code_len <= 0) return 0;
 
-    // waiting?
     if (t->wake_ms != 0 && now_ms < t->wake_ms) return 0;
     t->wake_ms = 0;
 
-    // watchdog budget
     if (!watchdog_allow_step(budget)) return 0;
 
     if (t->pc < 0 || t->pc >= t->code_len) {
@@ -277,13 +295,12 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
 
         case OP_FOREVER_END: {
             int j = in.jump;
-            if (j < 0) j = 0;
-            if (j >= t->code_len) j = 0;
+            if (j < 0 || j >= t->code_len) j = 0;
             t->pc = j;
             return 1;
         }
 
-        // IF / ELSE
+        // IF / ELSE (kept for later, not used in broadcast demo above)
         case OP_IF_BEGIN: {
             int ok = eval_cond(in.cond, in.a, p);
             if (!ok) t->pc = in.jump;
@@ -307,15 +324,9 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
 }
 
 int scheduler_step_one(Scheduler* s, Project* p, uint64_t now_ms, uint64_t* out_block_id, int* budget) {
-    // round-robin: find one runnable thread
     for (int attempts = 0; attempts < 16; attempts++) {
         int idx = (s->rr_index + attempts) % 16;
         Thread* t = &s->threads[idx];
-
-        // Patch FOREVER_END jump for scripts that want to loop to 0
-        // (safe even if not a forever script)
-        // NOTE: this is just for our demos/keys; later your compiler will set jump properly.
-        // We don't mutate const Instr, so we handle jump=0 by convention.
 
         uint64_t bid = 0;
         int did = step_thread(t, p, now_ms, &bid, budget);
