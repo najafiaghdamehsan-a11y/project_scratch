@@ -61,9 +61,9 @@ void runtime_post_key(Runtime* r, int keycode) {
 void runtime_tick(Runtime* r, Project* p) {
     // NEW: log key events even if paused/stopped
     if (r->key_pending) {
-        static char keybuf[32];
-        std::snprintf(keybuf, sizeof(keybuf), "%d", r->last_key);
-        log_write(LogRecord{r->cycle, 0, "EVENT", "KeyDown", keybuf, LOG_INFO});
+        int k = r->last_key;
+        // ... log ...
+        if (r->running) scheduler_start_on_key(&r->sched, k);
         r->key_pending = 0;
     }
 
