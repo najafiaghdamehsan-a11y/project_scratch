@@ -25,6 +25,7 @@ add_executable(project_scratch
 		src/engine/vars.cpp
 
 		src/ui/app.cpp
+		src/ui/block_editor.cpp
 )
 
 target_include_directories(project_scratch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -1,60 +1,42 @@
 #include "ui/app.h"
+#include "ui/block_editor.h"
 #include "core/log.h"
-#include "model/model_ops.h"
+
 #include <SDL.h>
 #include <SDL_ttf.h>
-#include <cstdio>
-#include <cstring>
-#include <cmath>
 
-#ifndef PROJECT_ROOT
-#define PROJECT_ROOT "."
-#endif
+#include <stdio.h>
+#include <string.h>
 
-static const char* FONT_PATH = PROJECT_ROOT "/assets/fonts/Arial.ttf";
-
-static int pt_in_rect(int x, int y, const SDL_Rect& r) {
-    return x >= r.x && x < (r.x + r.w) && y >= r.y && y < (r.y + r.h);
+static int pt_in_rect(int x, int y, const SDL_Rect* r) {
+    return x >= r->x && y >= r->y && x < (r->x + r->w) && y < (r->y + r->h);
 }
 
-static void draw_rect(SDL_Renderer* ren, const SDL_Rect& r, uint8_t rr, uint8_t gg, uint8_t bb) {
-    SDL_SetRenderDrawColor(ren, rr, gg, bb, 255);
+static void draw_filled_rect(SDL_Renderer* ren, SDL_Rect r, uint8_t rr, uint8_t gg, uint8_t bb, uint8_t aa) {
+    SDL_SetRenderDrawColor(ren, rr, gg, bb, aa);
     SDL_RenderFillRect(ren, &r);
 }
 
-static void draw_rect_outline(SDL_Renderer* ren, const SDL_Rect& r, uint8_t rr, uint8_t gg, uint8_t bb) {
-    SDL_SetRenderDrawColor(ren, rr, gg, bb, 255);
+static void draw_rect(SDL_Renderer* ren, SDL_Rect r, uint8_t rr, uint8_t gg, uint8_t bb, uint8_t aa) {
+    SDL_SetRenderDrawColor(ren, rr, gg, bb, aa);
     SDL_RenderDrawRect(ren, &r);
 }
 
-static void draw_text(SDL_Renderer* ren, TTF_Font* font, int x, int y, const char* text,
-                      uint8_t rr, uint8_t gg, uint8_t bb) {
-    if (!font || !text || !text[0]) return;
-
-    SDL_Color col{rr, gg, bb, 255};
-    SDL_Surface* surf = TTF_RenderUTF8_Blended(font, text, col);
-    if (!surf) return;
-
-    SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
-    if (!tex) {
-        SDL_FreeSurface(surf);
-        return;
-    }
-
-    SDL_Rect dst{x, y, surf->w, surf->h};
-    SDL_FreeSurface(surf);
-
-    SDL_RenderCopy(ren, tex, nullptr, &dst);
-    SDL_DestroyTexture(tex);
+static void draw_line(SDL_Renderer* ren, int x1, int y1, int x2, int y2, uint8_t rr, uint8_t gg, uint8_t bb, uint8_t aa) {
+    SDL_SetRenderDrawColor(ren, rr, gg, bb, aa);
+    SDL_RenderDrawLine(ren, x1, y1, x2, y2);
 }
 
-// Simple filled circle (for category dots / flag / stop)
-static void draw_filled_circle(SDL_Renderer* ren, int cx, int cy, int radius, uint8_t rr, uint8_t gg, uint8_t bb) {
-    SDL_SetRenderDrawColor(ren, rr, gg, bb, 255);
-    for (int dy = -radius; dy <= radius; dy++) {
-        int dx = (int)std::sqrt((double)radius * radius - (double)dy * dy);
-        SDL_RenderDrawLine(ren, cx - dx, cy + dy, cx + dx, cy + dy);
-    }
+static void draw_text(SDL_Renderer* ren, TTF_Font* font, int x, int y, const char* text, SDL_Color c) {
+    if (!font || !text) return;
+    SDL_Surface* s = TTF_RenderUTF8_Blended(font, text, c);
+    if (!s) return;
+    SDL_Texture* t = SDL_CreateTextureFromSurface(ren, s);
+    if (!t) { SDL_FreeSurface(s); return; }
+    SDL_Rect dst{ x, y, s->w, s->h };
+    SDL_FreeSurface(s);
+    SDL_RenderCopy(ren, t, NULL, &dst);
+    SDL_DestroyTexture(t);
 }
 
 static void update_window_title(SDL_Window* win, const Project* p) {
@@ -66,60 +48,80 @@ static void update_window_title(SDL_Window* win, const Project* p) {
         name = p->sprites[a].name;
     }
     char title[256];
-    std::snprintf(title, sizeof(title),
-                  "project_scratch | Active: %s%s",
-                  name,
-                  project_is_dirty(p) ? " *" : "");
+    snprintf(title, sizeof(title), "project_scratch | Active: %s", name);
     SDL_SetWindowTitle(win, title);
 }
 
-enum Category {
-    CAT_MOTION = 0,
-    CAT_LOOKS,
-    CAT_SOUND,
-    CAT_EVENTS,
-    CAT_CONTROL,
-    CAT_SENSING,
-    CAT_OPERATORS,
-    CAT_VARIABLES,
-    CAT_COUNT
-};
+static void project_add_sprite(Project* p) {
+    if (!p) return;
+    if (p->sprite_count >= MAX_SPRITES) return;
 
-static const char* CAT_NAMES[CAT_COUNT] = {
-    "Motion", "Looks", "Sound", "Events", "Control", "Sensing", "Operators", "Variables"
-};
+    int idx = p->sprite_count++;
+    Sprite* s = &p->sprites[idx];
 
-// Scratch-ish colors per category (simple)
-static void cat_color(int cat, uint8_t& r, uint8_t& g, uint8_t& b) {
-    switch (cat) {
-        case CAT_MOTION:    r = 60;  g = 120; b = 255; break;
-        case CAT_LOOKS:     r = 160; g = 80;  b = 255; break;
-        case CAT_SOUND:     r = 255; g = 90;  b = 140; break;
-        case CAT_EVENTS:    r = 255; g = 190; b = 60;  break;
-        case CAT_CONTROL:   r = 255; g = 140; b = 60;  break;
-        case CAT_SENSING:   r = 70;  g = 200; b = 200; break;
-        case CAT_OPERATORS: r = 70;  g = 200; b = 120; break;
-        case CAT_VARIABLES: r = 255; g = 120; b = 60;  break;
-        default:            r = 200; g = 200; b = 200; break;
-    }
+    static uint64_t next_id = 1;
+    s->id = next_id++;
+
+    snprintf(s->name, MAX_NAME, "Sprite%d", idx + 1);
+    s->x = 0;
+    s->y = 0;
+    s->dir = 90;
+    s->size = 100;
+    s->visible = 1;
+
+    p->active_sprite_index = idx;
 }
 
-static void draw_workspace_grid(SDL_Renderer* ren, const SDL_Rect& r) {
-    // Very light grid dots like Scratch
-    SDL_SetRenderDrawColor(ren, 210, 210, 210, 255);
-    for (int y = r.y + 10; y < r.y + r.h; y += 20) {
-        for (int x = r.x + 10; x < r.x + r.w; x += 20) {
-            SDL_RenderDrawPoint(ren, x, y);
+static void project_delete_active(Project* p) {
+    if (!p) return;
+    if (p->sprite_count <= 0) return;
+
+    int a = p->active_sprite_index;
+    if (a < 0) a = 0;
+    if (a >= p->sprite_count) a = p->sprite_count - 1;
+
+    for (int i = a; i < p->sprite_count - 1; i++) {
+        p->sprites[i] = p->sprites[i + 1];
+    }
+    p->sprite_count--;
+
+    if (p->sprite_count <= 0) {
+        p->active_sprite_index = 0;
+        return;
+    }
+    if (a >= p->sprite_count) a = p->sprite_count - 1;
+    p->active_sprite_index = a;
+}
+
+static void project_toggle_visible(Project* p) {
+    if (!p) return;
+    if (p->sprite_count <= 0) return;
+    int a = p->active_sprite_index;
+    if (a < 0) a = 0;
+    if (a >= p->sprite_count) a = 0;
+    p->sprites[a].visible = !p->sprites[a].visible;
+}
+
+static void draw_circle_button(SDL_Renderer* ren, int cx, int cy, int r, SDL_Color fill, SDL_Color border) {
+    // simple filled circle approximation (no fancy antialias)
+    for (int y = -r; y <= r; y++) {
+        for (int x = -r; x <= r; x++) {
+            if (x*x + y*y <= r*r) {
+                SDL_SetRenderDrawColor(ren, fill.r, fill.g, fill.b, fill.a);
+                SDL_RenderDrawPoint(ren, cx + x, cy + y);
+            }
         }
     }
-}
-
-static void draw_fake_block(SDL_Renderer* ren, TTF_Font* font, int x, int y, int w, int h,
-                            uint8_t rr, uint8_t gg, uint8_t bb, const char* label) {
-    SDL_Rect r{x, y, w, h};
-    draw_rect(ren, r, rr, gg, bb);
-    draw_rect_outline(ren, r, 30, 30, 30);
-    draw_text(ren, font, x + 10, y + 8, label, 255, 255, 255);
+    // border ring
+    for (int y = -r; y <= r; y++) {
+        for (int x = -r; x <= r; x++) {
+            int d = x*x + y*y;
+            if (d <= r*r && d >= (r-1)*(r-1)) {
+                SDL_SetRenderDrawColor(ren, border.r, border.g, border.b, border.a);
+                SDL_RenderDrawPoint(ren, cx + x, cy + y);
+            }
+        }
+    }
 }
 
 int app_run(Project* project, Runtime* runtime) {
@@ -128,21 +130,17 @@ int app_run(Project* project, Runtime* runtime) {
         return 0;
     }
 
-    int ttf_ok = 1;
     if (TTF_Init() != 0) {
-        log_write(LogRecord{0,0,"TTF","Init failed", TTF_GetError(), LOG_ERROR});
-        ttf_ok = 0;
+        log_write(LogRecord{0,0,"TTF","TTF_Init failed", TTF_GetError(), LOG_ERROR});
+        // continue, just no text
     }
-
-    const int WIN_W = 1200;
-    const int WIN_H = 700;
 
     SDL_Window* win = SDL_CreateWindow("project_scratch",
                                        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                       WIN_W, WIN_H, SDL_WINDOW_SHOWN);
+                                       1280, 720, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!win) {
         log_write(LogRecord{0,0,"SDL","CreateWindow failed", SDL_GetError(), LOG_ERROR});
-        if (ttf_ok) TTF_Quit();
+        TTF_Quit();
         SDL_Quit();
         return 0;
     }
@@ -151,317 +149,292 @@ int app_run(Project* project, Runtime* runtime) {
     if (!ren) {
         log_write(LogRecord{0,0,"SDL","CreateRenderer failed", SDL_GetError(), LOG_ERROR});
         SDL_DestroyWindow(win);
-        if (ttf_ok) TTF_Quit();
+        TTF_Quit();
         SDL_Quit();
         return 0;
     }
 
-    TTF_Font* font = nullptr;
-    if (ttf_ok) {
-        font = TTF_OpenFont(FONT_PATH, 16);
-        if (!font) log_write(LogRecord{0,0,"TTF","OpenFont failed", TTF_GetError(), LOG_ERROR});
+    // Font (you have: assets/fonts/Arial.ttf)
+    TTF_Font* font = TTF_OpenFont("assets/fonts/Arial.ttf", 18);
+    if (!font) {
+        log_write(LogRecord{0,0,"TTF","OpenFont failed", TTF_GetError(), LOG_ERROR});
+        // continue, just no text
     }
 
-    update_window_title(win, project);
+    // Ensure at least one sprite exists
+    if (project && project->sprite_count == 0) {
+        project_add_sprite(project);
+    }
 
-    // Layout (Scratch-like)
-    const int TOPBAR_H = 44;
-    const int LEFT_W   = 270;
-    const int RIGHT_W  = 360;
+    // Block editor (palette -> workspace drag)
+    BlockEditor be;
+    block_editor_init(&be);
 
-    SDL_Rect topbar   {0, 0, WIN_W, TOPBAR_H};
-    SDL_Rect left     {0, TOPBAR_H, LEFT_W, WIN_H - TOPBAR_H};
-    SDL_Rect right    {WIN_W - RIGHT_W, TOPBAR_H, RIGHT_W, WIN_H - TOPBAR_H};
-    SDL_Rect workspace{LEFT_W, TOPBAR_H, WIN_W - LEFT_W - RIGHT_W, WIN_H - TOPBAR_H};
+    // Layout constants
+    const int TOP = 50;
+    const int RIGHT = 360;
+    const int CAT_W = 140;
+    const int PAL_W = 260;
 
-    // Left sub-layout
-    const int CAT_COL_W = 70;
-    SDL_Rect catCol     {left.x, left.y, CAT_COL_W, left.h};
-    SDL_Rect palette    {left.x + CAT_COL_W, left.y, left.w - CAT_COL_W, left.h};
-
-    // Right sub-layout
-    SDL_Rect stage      {right.x + 10, right.y + 10, right.w - 20, 340};
-    SDL_Rect spritePane {right.x + 10, stage.y + stage.h + 10, right.w - 20,
-                         right.h - stage.h - 20};
-
-    // Green flag / stop
-    SDL_Rect btnFlag{stage.x + 10, stage.y - 28, 22, 22};
-    SDL_Rect btnStop{stage.x + 40, stage.y - 28, 22, 22};
-
-    // Sprite pane buttons (your old ones, moved)
-    SDL_Rect btnAdd { spritePane.x + 10, spritePane.y + 10, (spritePane.w - 40) / 3, 32 };
-    SDL_Rect btnDel { spritePane.x + 20 + btnAdd.w, spritePane.y + 10, (spritePane.w - 40) / 3, 32 };
-    SDL_Rect btnVis { spritePane.x + 30 + btnAdd.w + btnDel.w, spritePane.y + 10, (spritePane.w - 40) / 3, 32 };
-
-    const int listTop = spritePane.y + 52;
-    const int itemH = 34;
-
-    int selected_cat = CAT_MOTION;
+    // Right panel sub-layout
+    const int RP_PAD = 14;
+    const int STAGE_H = 330;
+    const int BTN_H = 40;
 
     int running = 1;
-    while (running) {
-        SDL_Event e;
-        int titleNeedsUpdate = 0;
 
+    while (running) {
+        int W, H;
+        SDL_GetWindowSize(win, &W, &H);
+
+        // Left side = block editor
+        int left_w = W - RIGHT;
+        if (left_w < CAT_W + PAL_W + 200) left_w = CAT_W + PAL_W + 200;
+
+        SDL_Rect rect_cat = {0, TOP, CAT_W, H - TOP};
+        SDL_Rect rect_palette = {CAT_W, TOP, PAL_W, H - TOP};
+        SDL_Rect rect_workspace = {CAT_W + PAL_W, TOP, left_w - (CAT_W + PAL_W), H - TOP};
+
+        block_editor_set_layout(&be, rect_cat, rect_palette, rect_workspace);
+
+        // Right side = stage + sprite panel
+        SDL_Rect rect_right = {left_w, TOP, W - left_w, H - TOP};
+
+        SDL_Rect rect_stage = {
+            rect_right.x + RP_PAD,
+            rect_right.y + RP_PAD,
+            rect_right.w - 2*RP_PAD,
+            STAGE_H
+        };
+
+        SDL_Rect rect_sprite_panel = {
+            rect_right.x + RP_PAD,
+            rect_stage.y + rect_stage.h + RP_PAD,
+            rect_right.w - 2*RP_PAD,
+            rect_right.y + rect_right.h - (rect_stage.y + rect_stage.h + RP_PAD) - RP_PAD
+        };
+
+        // Buttons in sprite panel
+        SDL_Rect btn_add = { rect_sprite_panel.x, rect_sprite_panel.y, rect_sprite_panel.w/3 - 6, BTN_H };
+        SDL_Rect btn_del = { btn_add.x + btn_add.w + 9, rect_sprite_panel.y, rect_sprite_panel.w/3 - 6, BTN_H };
+        SDL_Rect btn_vis = { btn_del.x + btn_del.w + 9, rect_sprite_panel.y, rect_sprite_panel.w - (btn_del.x + btn_del.w + 9 - rect_sprite_panel.x), BTN_H };
+
+        SDL_Rect rect_sprite_list = {
+            rect_sprite_panel.x,
+            rect_sprite_panel.y + BTN_H + 10,
+            rect_sprite_panel.w,
+            rect_sprite_panel.h - (BTN_H + 10)
+        };
+
+        // Green flag + stop buttons (top-right area, like Scratch)
+        int gf_r = 10;
+        int gf_cx = rect_stage.x + 18;
+        int gf_cy = rect_stage.y - 18;
+        int st_cx = rect_stage.x + 45;
+        int st_cy = rect_stage.y - 18;
+
+        SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
 
+            // Let block editor consume mouse events too
+            block_editor_handle_event(&be, &e);
+
+            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) {
+                running = 0;
+            }
+
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
-                int mx = e.button.x;
-                int my = e.button.y;
+                int mx = e.button.x, my = e.button.y;
 
-                // Top stage controls
-                if (pt_in_rect(mx, my, btnFlag)) runtime_green_flag(runtime);
-                if (pt_in_rect(mx, my, btnStop)) runtime_stop_all(runtime);
-
-                // Category clicks
-                if (pt_in_rect(mx, my, catCol)) {
-                    int item = (my - catCol.y - 10) / 46;
-                    if (item >= 0 && item < CAT_COUNT) {
-                        selected_cat = item;
-                    }
+                // Green flag circle hit-test (distance)
+                int dxg = mx - gf_cx, dyg = my - gf_cy;
+                if (dxg*dxg + dyg*dyg <= gf_r*gf_r) {
+                    runtime_green_flag(runtime);
+                }
+                int dxs = mx - st_cx, dys = my - st_cy;
+                if (dxs*dxs + dys*dys <= gf_r*gf_r) {
+                    runtime_stop_all(runtime);
                 }
 
-                // Sprite panel clicks
-                if (pt_in_rect(mx, my, spritePane)) {
-                    if (pt_in_rect(mx, my, btnAdd)) {
-                        char nm[64];
-                        std::snprintf(nm, sizeof(nm), "Sprite%d", project->sprite_count + 1);
-                        int idx = project_add_sprite(project, nm);
-                        if (idx >= 0) {
-                            project_set_active_sprite(project, idx);
-                            titleNeedsUpdate = 1;
-                        }
-                    } else if (pt_in_rect(mx, my, btnDel)) {
-                        if (project->sprite_count > 0) {
-                            project_delete_sprite(project, project->active_sprite_index);
-                            titleNeedsUpdate = 1;
-                        }
-                    } else if (pt_in_rect(mx, my, btnVis)) {
-                        if (project->sprite_count > 0) {
-                            int a = project->active_sprite_index;
-                            if (a < 0) a = 0;
-                            if (a >= project->sprite_count) a = 0;
-                            sprite_set_visible(project, a, !project->sprites[a].visible);
-                            titleNeedsUpdate = 1;
-                        }
-                    } else {
-                        int idx = (my - listTop) / itemH;
-                        if (idx >= 0 && idx < project->sprite_count) {
-                            if (project_set_active_sprite(project, idx)) {
-                                titleNeedsUpdate = 1;
-                            }
-                        }
+                // Sprite panel buttons
+                if (pt_in_rect(mx, my, &btn_add)) project_add_sprite(project);
+                if (pt_in_rect(mx, my, &btn_del)) project_delete_active(project);
+                if (pt_in_rect(mx, my, &btn_vis)) project_toggle_visible(project);
+
+                // Click sprite list to select active
+                if (pt_in_rect(mx, my, &rect_sprite_list) && project && project->sprite_count > 0) {
+                    int row_h = 34;
+                    int idx = (my - rect_sprite_list.y) / row_h;
+                    if (idx >= 0 && idx < project->sprite_count) {
+                        project->active_sprite_index = idx;
                     }
                 }
             }
 
+            // Keyboard controls
             if (e.type == SDL_KEYDOWN) {
-                SDL_Keycode key = e.key.keysym.sym;
+                SDL_Keycode k = e.key.keysym.sym;
 
-                // Engine debug keys (still useful)
-                if (key == SDLK_p) runtime_set_paused(runtime, !runtime->paused);
-                if (key == SDLK_s) runtime_set_step_mode(runtime, !runtime->step_mode);
-                if (key == SDLK_n) runtime_request_step(runtime);
-                if (key == SDLK_g) runtime_green_flag(runtime);
-                if (key == SDLK_x) runtime_stop_all(runtime);
+                // Engine test controls
+                if (k == SDLK_g) runtime_green_flag(runtime);
+                if (k == SDLK_x) runtime_stop_all(runtime);
+                if (k == SDLK_p) runtime_set_paused(runtime, !runtime->paused);
+                if (k == SDLK_s) runtime_set_step_mode(runtime, !runtime->step_mode);
+                if (k == SDLK_n) runtime_request_step(runtime);
 
-                // Sprite edit keys
-                if (project->sprite_count > 0) {
+                // Sprite controls (active sprite)
+                if (project && project->sprite_count > 0) {
                     int a = project->active_sprite_index;
                     if (a < 0) a = 0;
                     if (a >= project->sprite_count) a = 0;
+                    Sprite* s = &project->sprites[a];
 
-                    double x = project->sprites[a].x;
-                    double y = project->sprites[a].y;
+                    if (k == SDLK_LEFT)  s->x -= 5;
+                    if (k == SDLK_RIGHT) s->x += 5;
+                    if (k == SDLK_UP)    s->y += 5;
+                    if (k == SDLK_DOWN)  s->y -= 5;
 
-                    const double step = 5.0;
-                    if (key == SDLK_LEFT)  { x -= step; sprite_set_pos(project, a, x, y); titleNeedsUpdate = 1; }
-                    if (key == SDLK_RIGHT) { x += step; sprite_set_pos(project, a, x, y); titleNeedsUpdate = 1; }
-                    if (key == SDLK_UP)    { y += step; sprite_set_pos(project, a, x, y); titleNeedsUpdate = 1; }
-                    if (key == SDLK_DOWN)  { y -= step; sprite_set_pos(project, a, x, y); titleNeedsUpdate = 1; }
+                    if (k == SDLK_LEFTBRACKET)  s->dir -= 5;
+                    if (k == SDLK_RIGHTBRACKET) s->dir += 5;
 
-                    if (key == SDLK_LEFTBRACKET)  { sprite_set_dir(project, a, project->sprites[a].dir - 10.0); titleNeedsUpdate = 1; }
-                    if (key == SDLK_RIGHTBRACKET) { sprite_set_dir(project, a, project->sprites[a].dir + 10.0); titleNeedsUpdate = 1; }
-                    if (key == SDLK_MINUS)        { sprite_set_size(project, a, project->sprites[a].size - 5.0); titleNeedsUpdate = 1; }
-                    if (key == SDLK_EQUALS)       { sprite_set_size(project, a, project->sprites[a].size + 5.0); titleNeedsUpdate = 1; }
+                    if (k == SDLK_MINUS) s->size -= 5;
+                    if (k == SDLK_EQUALS) s->size += 5;
+                    if (s->size < 10) s->size = 10;
+                    if (s->size > 300) s->size = 300;
                 }
             }
         }
 
-        if (titleNeedsUpdate) update_window_title(win, project);
-
+        // Engine tick
         runtime_tick(runtime, project);
 
-        // ======= DRAW =======
-        SDL_SetRenderDrawColor(ren, 235, 235, 240, 255);
+        update_window_title(win, project);
+
+        // Background
+        SDL_SetRenderDrawColor(ren, 230, 230, 235, 255);
         SDL_RenderClear(ren);
 
-        // Topbar (Scratch purple-ish)
-        draw_rect(ren, topbar, 140, 90, 210);
-        draw_text(ren, font, 14, 12, "project_scratch", 255, 255, 255);
-        draw_text(ren, font, 160, 12, "Code", 255, 255, 255);
-        draw_text(ren, font, 220, 12, "Costumes", 230, 230, 230);
-        draw_text(ren, font, 320, 12, "Sounds", 230, 230, 230);
+        // Top bar (Scratch-ish purple)
+        SDL_Rect topbar{0, 0, W, TOP};
+        draw_filled_rect(ren, topbar, 133, 94, 205, 255);
+        draw_text(ren, font, 14, 14, "project_scratch      Code   Costumes   Sounds", SDL_Color{255,255,255,255});
 
-        // Left panels background
-        draw_rect(ren, left, 245, 245, 248);
-        draw_rect_outline(ren, left, 200, 200, 205);
+        // Block editor area (left)
+        block_editor_draw(&be, ren, font);
 
-        // Category column
-        draw_rect(ren, catCol, 240, 240, 244);
-        draw_rect_outline(ren, catCol, 210, 210, 215);
+        // Stage container (right)
+        draw_rect(ren, rect_stage, 120, 120, 120, 255);
+        draw_filled_rect(ren, rect_stage, 255, 255, 255, 255);
 
-        for (int i = 0; i < CAT_COUNT; i++) {
-            SDL_Rect item{catCol.x + 6, catCol.y + 10 + i * 46, catCol.w - 12, 40};
+        // Stage origin crosshair
+        int sx0 = rect_stage.x + rect_stage.w/2;
+        int sy0 = rect_stage.y + rect_stage.h/2;
+        draw_line(ren, rect_stage.x, sy0, rect_stage.x + rect_stage.w, sy0, 220,220,220,255);
+        draw_line(ren, sx0, rect_stage.y, sx0, rect_stage.y + rect_stage.h, 220,220,220,255);
 
-            if (i == selected_cat) {
-                draw_rect(ren, item, 255, 255, 255);
-                draw_rect_outline(ren, item, 120, 120, 130);
-            } else {
-                draw_rect(ren, item, 240, 240, 244);
+        // Green flag + stop circles above stage
+        draw_circle_button(ren, gf_cx, gf_cy, gf_r, SDL_Color{70, 200, 70, 255}, SDL_Color{30, 120, 30, 255});
+        draw_circle_button(ren, st_cx, st_cy, gf_r, SDL_Color{230, 80, 80, 255}, SDL_Color{140, 30, 30, 255});
+
+        // Draw sprites in stage
+        if (project && project->sprite_count > 0) {
+            for (int i = 0; i < project->sprite_count; i++) {
+                const Sprite* s = &project->sprites[i];
+                if (!s->visible) continue;
+
+                int cx = sx0 + (int)s->x;
+                int cy = sy0 - (int)s->y;
+
+                int base = 30;
+                int sz = (int)(base * (s->size / 100.0));
+                if (sz < 6) sz = 6;
+
+                SDL_Rect rr{ cx - sz/2, cy - sz/2, sz, sz };
+
+                // Active highlight
+                if (i == project->active_sprite_index) {
+                    draw_rect(ren, SDL_Rect{rr.x-2, rr.y-2, rr.w+4, rr.h+4}, 150, 100, 220, 255);
+                }
+
+                SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+                SDL_RenderFillRect(ren, &rr);
+                draw_rect(ren, rr, 120, 120, 120, 255);
             }
-
-            uint8_t cr, cg, cb;
-            cat_color(i, cr, cg, cb);
-            draw_filled_circle(ren, item.x + 16, item.y + 20, 8, cr, cg, cb);
-            draw_text(ren, font, item.x + 30, item.y + 11, CAT_NAMES[i], 40, 40, 40);
         }
 
-        // Palette panel
-        draw_rect(ren, palette, 250, 250, 252);
-        draw_rect_outline(ren, palette, 210, 210, 215);
-
-        // Title
-        char palTitle[64];
-        std::snprintf(palTitle, sizeof(palTitle), "%s", CAT_NAMES[selected_cat]);
-        draw_text(ren, font, palette.x + 12, palette.y + 12, palTitle, 40, 40, 40);
-
-        // Fake block list (just to look Scratch-like)
-        uint8_t br, bg, bb;
-        cat_color(selected_cat, br, bg, bb);
-        int bx = palette.x + 12;
-        int by = palette.y + 40;
-
-        if (selected_cat == CAT_MOTION) {
-            draw_fake_block(ren, font, bx, by,  palette.w - 24, 34, br, bg, bb, "move 10 steps"); by += 44;
-            draw_fake_block(ren, font, bx, by,  palette.w - 24, 34, br, bg, bb, "turn 15 degrees"); by += 44;
-            draw_fake_block(ren, font, bx, by,  palette.w - 24, 34, br, bg, bb, "go to x: 0 y: 0"); by += 44;
-        } else if (selected_cat == CAT_CONTROL) {
-            draw_fake_block(ren, font, bx, by,  palette.w - 24, 34, br, bg, bb, "wait 1 seconds"); by += 44;
-            draw_fake_block(ren, font, bx, by,  palette.w - 24, 34, br, bg, bb, "repeat 10"); by += 44;
-            draw_fake_block(ren, font, bx, by,  palette.w - 24, 34, br, bg, bb, "if < > then"); by += 44;
-        } else {
-            draw_fake_block(ren, font, bx, by,  palette.w - 24, 34, br, bg, bb, "(blocks placeholder)"); by += 44;
-        }
-
-        // Workspace (scripts area)
-        draw_rect(ren, workspace, 245, 245, 245);
-        draw_rect_outline(ren, workspace, 200, 200, 205);
-        draw_workspace_grid(ren, workspace);
-        draw_text(ren, font, workspace.x + 14, workspace.y + 12, "Scripts Workspace (next: drag & snap)", 60, 60, 60);
-
-        // Right background
-        draw_rect(ren, right, 240, 240, 244);
-        draw_rect_outline(ren, right, 200, 200, 205);
-
-        // Stage (white like Scratch)
-        draw_rect(ren, stage, 255, 255, 255);
-        draw_rect_outline(ren, stage, 180, 180, 185);
-
-        // Green flag / stop
-        draw_filled_circle(ren, btnFlag.x + 11, btnFlag.y + 11, 10, 60, 200, 90);
-        draw_filled_circle(ren, btnStop.x + 11, btnStop.y + 11, 10, 230, 90, 90);
-
-        // Draw sprites inside stage
-        int stage_cx = stage.x + stage.w / 2;
-        int stage_cy = stage.y + stage.h / 2;
-
-        for (int i = 0; i < project->sprite_count; i++) {
-            Sprite* s = &project->sprites[i];
-            if (!s->visible) continue;
-
-            int cx = stage_cx + (int)s->x;
-            int cy = stage_cy - (int)s->y;
-
-            double sc = s->size / 100.0;
-            if (sc < 0.2) sc = 0.2;
-            if (sc > 3.0) sc = 3.0;
-
-            int half = (int)(18 * sc);
-            SDL_Rect r{cx - half, cy - half, half * 2, half * 2};
-
-            if (i == project->active_sprite_index) {
-                draw_rect(ren, r, 255, 255, 255);
-                SDL_Rect outline{r.x - 2, r.y - 2, r.w + 4, r.h + 4};
-                draw_rect_outline(ren, outline, 150, 90, 210);
-            } else {
-                draw_rect(ren, r, 200, 200, 200);
-            }
-            draw_rect_outline(ren, r, 120, 120, 120);
-        }
-
-        // Sprite pane
-        draw_rect(ren, spritePane, 235, 235, 240);
-        draw_rect_outline(ren, spritePane, 200, 200, 205);
+        // Sprite panel
+        draw_filled_rect(ren, rect_sprite_panel, 245, 245, 248, 255);
+        draw_rect(ren, rect_sprite_panel, 200, 200, 210, 255);
 
         // Buttons
-        draw_rect(ren, btnAdd,  60, 170, 80);
-        draw_rect(ren, btnDel,  210, 80, 80);
-        draw_rect(ren, btnVis,  80, 80, 200);
-        draw_text(ren, font, btnAdd.x + 12, btnAdd.y + 7, "Add", 255, 255, 255);
-        draw_text(ren, font, btnDel.x + 12, btnDel.y + 7, "Del", 255, 255, 255);
-        draw_text(ren, font, btnVis.x + 12, btnVis.y + 7, "Vis", 255, 255, 255);
+        draw_filled_rect(ren, btn_add,  60, 170,  80, 255);
+        draw_filled_rect(ren, btn_del, 200,  80,  80, 255);
+        draw_filled_rect(ren, btn_vis,  80,  80, 190, 255);
+        draw_text(ren, font, btn_add.x + 18, btn_add.y + 9, "Add", SDL_Color{255,255,255,255});
+        draw_text(ren, font, btn_del.x + 18, btn_del.y + 9, "Del", SDL_Color{255,255,255,255});
+        draw_text(ren, font, btn_vis.x + 18, btn_vis.y + 9, "Vis", SDL_Color{255,255,255,255});
 
         // Sprite list
-        draw_text(ren, font, spritePane.x + 10, spritePane.y + 46, "Sprites", 60, 60, 60);
+        draw_text(ren, font, rect_sprite_list.x, rect_sprite_list.y - 24, "Sprites", SDL_Color{60,60,60,255});
+        if (project && project->sprite_count > 0) {
+            int row_h = 34;
+            for (int i = 0; i < project->sprite_count; i++) {
+                SDL_Rect row{ rect_sprite_list.x, rect_sprite_list.y + i*row_h, rect_sprite_list.w, row_h };
+                if (i == project->active_sprite_index) {
+                    draw_rect(ren, row, 150, 100, 220, 255);
+                } else {
+                    draw_rect(ren, row, 210, 210, 220, 255);
+                }
 
-        for (int i = 0; i < project->sprite_count; i++) {
-            SDL_Rect item{spritePane.x + 10, listTop + i * itemH, spritePane.w - 20, itemH - 4};
+                // visible checkbox
+                SDL_Rect box{ row.x + 8, row.y + 9, 16, 16 };
+                draw_rect(ren, box, 120,120,120,255);
+                if (project->sprites[i].visible) {
+                    draw_filled_rect(ren, SDL_Rect{box.x+3, box.y+3, 10, 10}, 120,120,120,255);
+                }
 
-            if (i == project->active_sprite_index) {
-                draw_rect(ren, item, 255, 255, 255);
-                draw_rect_outline(ren, item, 150, 90, 210);
-            } else {
-                draw_rect(ren, item, 245, 245, 248);
-                draw_rect_outline(ren, item, 210, 210, 215);
+                draw_text(ren, font, row.x + 32, row.y + 7, project->sprites[i].name, SDL_Color{50,50,50,255});
             }
 
-            SDL_Rect dot{item.x + 6, item.y + 7, 14, 14};
-            draw_rect(ren, dot, project->sprites[i].visible ? 200 : 120,
-                      project->sprites[i].visible ? 200 : 120,
-                      project->sprites[i].visible ? 200 : 120);
-
-            draw_text(ren, font, item.x + 28, item.y + 5, project->sprites[i].name, 40, 40, 40);
-        }
-
-        // Active stats
-        int statsY = listTop + project->sprite_count * itemH + 8;
-        draw_text(ren, font, spritePane.x + 10, statsY, "Active", 60, 60, 60);
-        statsY += 18;
-
-        if (project->sprite_count > 0) {
+            // Active sprite info
             int a = project->active_sprite_index;
             if (a < 0) a = 0;
             if (a >= project->sprite_count) a = 0;
+            const Sprite* s = &project->sprites[a];
 
-            char buf[128];
-            std::snprintf(buf, sizeof(buf), "X: %.0f  Y: %.0f", project->sprites[a].x, project->sprites[a].y);
-            draw_text(ren, font, spritePane.x + 10, statsY, buf, 40, 40, 40);
-            statsY += 18;
+            int info_y = rect_sprite_list.y + project->sprite_count * 34 + 16;
+            if (info_y < rect_sprite_panel.y + rect_sprite_panel.h - 120) {
+                char buf[128];
 
-            std::snprintf(buf, sizeof(buf), "Dir: %.0f  Size: %.0f", project->sprites[a].dir, project->sprites[a].size);
-            draw_text(ren, font, spritePane.x + 10, statsY, buf, 40, 40, 40);
-            statsY += 18;
+                draw_text(ren, font, rect_sprite_panel.x, info_y, "Active Sprite", SDL_Color{60,60,60,255});
+                info_y += 22;
+
+                snprintf(buf, sizeof(buf), "Name: %s", s->name);
+                draw_text(ren, font, rect_sprite_panel.x, info_y, buf, SDL_Color{60,60,60,255});
+                info_y += 22;
+
+                snprintf(buf, sizeof(buf), "X: %d   Y: %d", (int)s->x, (int)s->y);
+                draw_text(ren, font, rect_sprite_panel.x, info_y, buf, SDL_Color{60,60,60,255});
+                info_y += 22;
+
+                snprintf(buf, sizeof(buf), "Dir: %d   Size: %d", (int)s->dir, (int)s->size);
+                draw_text(ren, font, rect_sprite_panel.x, info_y, buf, SDL_Color{60,60,60,255});
+            }
         }
+
+        // Help keys (bottom-right small)
+        draw_text(ren, font, rect_right.x + 10, H - 64, "Keys:", SDL_Color{60,60,60,255});
+        draw_text(ren, font, rect_right.x + 10, H - 42, "Arrows move | [ ] rotate | -/= size", SDL_Color{60,60,60,255});
+        draw_text(ren, font, rect_right.x + 10, H - 20, "G start | X stop | P pause | S step | N next", SDL_Color{60,60,60,255});
 
         SDL_RenderPresent(ren);
     }
 
     if (font) TTF_CloseFont(font);
-    if (ttf_ok) TTF_Quit();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
+    TTF_Quit();
     SDL_Quit();
     return 1;
 }
