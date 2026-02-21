@@ -10,23 +10,39 @@ extern "C" {
         OP_NOP = 0,
 
         // Motion
-        OP_MOVE_STEPS,   // a = steps
-        OP_TURN_DEG,     // a = degrees (positive = turn right)
+        OP_MOVE_STEPS,    // a = steps
+        OP_TURN_DEG,      // a = degrees (positive = turn right)
 
         // Control
-        OP_WAIT_MS,      // a = milliseconds
-        OP_REPEAT_BEGIN, // count = repeat count, jump = index after matching END
-        OP_REPEAT_END,   // (uses repeat stack)
+        OP_WAIT_MS,       // a = milliseconds
+        OP_REPEAT_BEGIN,  // count = repeat count, jump = index after matching END
+        OP_REPEAT_END,    // (uses repeat stack)
+
+        // IF / ELSE
+        OP_IF_BEGIN,      // cond + a used, jump = index of ELSE/FALSE branch start
+        OP_ELSE,          // jump = index after ENDIF (skip false branch)
+        OP_ENDIF,
 
         OP_END
     } OpCode;
 
+    typedef enum CondCode {
+        COND_TRUE = 0,
+        COND_SPRITE_X_GT,   // sprite.x > a
+        COND_SPRITE_X_LT,   // sprite.x < a
+        COND_SPRITE_Y_GT,   // sprite.y > a
+        COND_SPRITE_Y_LT,   // sprite.y < a
+        COND_RANDOM_LT      // random(0..1) < a
+    } CondCode;
+
     typedef struct Instr {
         uint64_t id;
         OpCode op;
-        double a;   // numeric parameter (steps/deg/ms)
-        int jump;   // for REPEAT_BEGIN: where to jump when count <= 0 (index after loop)
-        int count;  // for REPEAT_BEGIN: repeat count
+
+        double a;     // steps/deg/ms OR condition threshold
+        int jump;     // for loops/if/else jumps
+        int count;    // for repeat begin
+        CondCode cond;// for OP_IF_BEGIN (otherwise can be COND_TRUE)
     } Instr;
 
     typedef struct Thread {

@@ -2,20 +2,45 @@
 #include "engine/safety.h"
 #include <cmath>
 
+// ---- tiny RNG (no SDL, deterministic-ish) ----
+static uint32_t g_rng = 0x12345678u;
+static uint32_t xorshift32(void) {
+    uint32_t x = g_rng;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    g_rng = x;
+    return x;
+}
+static double rand01(void) {
+    return (double)(xorshift32() & 0xFFFFFF) / (double)0x1000000; // [0,1)
+}
+
 // ---- helpers ----
 static double deg2rad(double deg) {
     return deg * 3.14159265358979323846 / 180.0;
 }
 
-// Scratch-like convention:
-// 0 deg = up, 90 = right, 180 = down, 270 = left
+// Scratch-like convention: 0=up, 90=right
 static void sprite_move_steps(Sprite* s, double steps) {
     double d = wrap_angle_deg(s->dir);
     double r = deg2rad(d);
-
-    // if 0 is up:
     s->x += steps * std::sin(r);
     s->y += steps * std::cos(r);
+}
+
+static int eval_cond(CondCode c, double a, const Project* p) {
+    const Sprite* spr = (p && p->sprite_count > 0) ? &p->sprites[0] : nullptr;
+
+    switch (c) {
+        case COND_TRUE: return 1;
+        case COND_SPRITE_X_GT: return spr ? (spr->x > a) : 0;
+        case COND_SPRITE_X_LT: return spr ? (spr->x < a) : 0;
+        case COND_SPRITE_Y_GT: return spr ? (spr->y > a) : 0;
+        case COND_SPRITE_Y_LT: return spr ? (spr->y < a) : 0;
+        case COND_RANDOM_LT:   return rand01() < a;
+        default: return 0;
+    }
 }
 
 static void thread_start(Thread* t, const Instr* code, int len) {
@@ -26,6 +51,65 @@ static void thread_start(Thread* t, const Instr* code, int len) {
     t->code_len = len;
     t->rep_top = 0;
 }
+
+// ---- Demo scripts ----
+//
+// Script A: repeat 120 {
+//   move 6
+//   if (x > 200) then turn 180 else turn 15
+//   wait 20ms
+// }
+static const Instr SCRIPT_A[] = {
+    // idx:0
+    {101, OP_REPEAT_BEGIN, 0.0, 9, 120, COND_TRUE},
+    {102, OP_MOVE_STEPS,   6.0, 0,   0, COND_TRUE},
+
+    // if x > 200
+    // if false jump -> idx 6 (false branch start)
+    {103, OP_IF_BEGIN,   200.0, 6,   0, COND_SPRITE_X_GT},
+
+    // true branch
+    {104, OP_TURN_DEG,   180.0, 0,   0, COND_TRUE},
+
+    // else: jump to idx 8 (after ENDIF)
+    {105, OP_ELSE,         0.0, 8,   0, COND_TRUE},
+
+    // false branch
+    {106, OP_TURN_DEG,    15.0, 0,   0, COND_TRUE},
+
+    {107, OP_ENDIF,        0.0, 0,   0, COND_TRUE},
+
+    {108, OP_WAIT_MS,     20.0, 0,   0, COND_TRUE},
+    {109, OP_REPEAT_END,   0.0, 0,   0, COND_TRUE},
+    {110, OP_END,          0.0, 0,   0, COND_TRUE},
+};
+
+// Script B: repeat 200 {
+//   if random < 0.5 then move 3 else move -3
+//   wait 15ms
+// }
+static const Instr SCRIPT_B[] = {
+    {201, OP_REPEAT_BEGIN, 0.0, 8, 200, COND_TRUE},
+
+    // if random < 0.5
+    // if false jump -> idx 5 (false branch)
+    {202, OP_IF_BEGIN,     0.5, 5,   0, COND_RANDOM_LT},
+
+    // true branch
+    {203, OP_MOVE_STEPS,   3.0, 0,   0, COND_TRUE},
+
+    // else jump -> idx 7 (after ENDIF)
+    {204, OP_ELSE,         0.0, 7,   0, COND_TRUE},
+
+    // false branch
+    {205, OP_MOVE_STEPS,  -3.0, 0,   0, COND_TRUE},
+
+    {206, OP_ENDIF,        0.0, 0,   0, COND_TRUE},
+
+    {207, OP_WAIT_MS,     15.0, 0,   0, COND_TRUE},
+    {208, OP_REPEAT_END,   0.0, 0,   0, COND_TRUE},
+    {209, OP_END,          0.0, 0,   0, COND_TRUE},
+};
 
 void scheduler_init(Scheduler* s) {
     for (int i = 0; i < 16; i++) {
@@ -49,28 +133,6 @@ void scheduler_stop_all(Scheduler* s) {
         s->threads[i].rep_top = 0;
     }
 }
-
-// ---- Demo scripts ----
-// Script A: repeat 24 { move 8; wait 60ms; turn 15; wait 60ms } end
-static const Instr SCRIPT_A[] = {
-    {101, OP_REPEAT_BEGIN, 0.0, 7, 24},
-    {102, OP_MOVE_STEPS,   8.0, 0, 0},
-    {103, OP_WAIT_MS,     60.0, 0, 0},
-    {104, OP_TURN_DEG,    15.0, 0, 0},
-    {105, OP_WAIT_MS,     60.0, 0, 0},
-    {106, OP_REPEAT_END,   0.0, 0, 0},
-    {107, OP_END,          0.0, 0, 0},
-};
-
-// Script B: repeat 30 { turn -10; move 4; wait 40ms } end
-static const Instr SCRIPT_B[] = {
-    {201, OP_REPEAT_BEGIN, 0.0, 6, 30},
-    {202, OP_TURN_DEG,   -10.0, 0, 0},
-    {203, OP_MOVE_STEPS,   4.0, 0, 0},
-    {204, OP_WAIT_MS,     40.0, 0, 0},
-    {205, OP_REPEAT_END,   0.0, 0, 0},
-    {206, OP_END,          0.0, 0, 0},
-};
 
 void scheduler_start_demo(Scheduler* s) {
     scheduler_stop_all(s);
@@ -99,7 +161,7 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
     const Instr in = t->code[t->pc++];
     if (out_block_id) *out_block_id = in.id;
 
-    Sprite* spr = (p->sprite_count > 0) ? &p->sprites[0] : nullptr;
+    Sprite* spr = (p && p->sprite_count > 0) ? &p->sprites[0] : nullptr;
 
     switch (in.op) {
         case OP_MOVE_STEPS:
@@ -117,40 +179,50 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
         case OP_REPEAT_BEGIN: {
             int n = in.count;
 
-            // If repeat count <= 0: skip loop body
             if (n <= 0) {
-                t->pc = in.jump; // jump to after loop end
+                t->pc = in.jump; // skip loop
                 return 1;
             }
 
-            // Push repeat state
-            if (t->rep_top >= 32) {
-                // Too deep nesting: stop thread safely
+            if (t->rep_top >= 32) { // nesting limit
                 t->active = 0;
                 return 1;
             }
 
             t->rep_left[t->rep_top] = n;
-            t->rep_begin_pc[t->rep_top] = t->pc; // first instruction after BEGIN
+            t->rep_begin_pc[t->rep_top] = t->pc;
             t->rep_top++;
             return 1;
         }
 
         case OP_REPEAT_END: {
-            if (t->rep_top <= 0) return 1; // malformed script; ignore
-
+            if (t->rep_top <= 0) return 1;
             int top = t->rep_top - 1;
             t->rep_left[top]--;
-
             if (t->rep_left[top] > 0) {
-                // loop back to begin body
                 t->pc = t->rep_begin_pc[top];
             } else {
-                // pop and continue
                 t->rep_top--;
             }
             return 1;
         }
+
+        case OP_IF_BEGIN: {
+            int ok = eval_cond(in.cond, in.a, p);
+            if (!ok) {
+                // jump to false branch start (ELSE block or direct false body)
+                t->pc = in.jump;
+            }
+            return 1;
+        }
+
+        case OP_ELSE:
+            // skip false branch
+            t->pc = in.jump;
+            return 1;
+
+        case OP_ENDIF:
+            return 1;
 
         case OP_END:
             t->active = 0;
@@ -162,7 +234,6 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
 }
 
 int scheduler_step_one(Scheduler* s, Project* p, uint64_t now_ms, uint64_t* out_block_id, int* budget) {
-    // Try up to 16 threads to find one runnable (round-robin)
     for (int attempts = 0; attempts < 16; attempts++) {
         int idx = (s->rr_index + attempts) % 16;
         Thread* t = &s->threads[idx];
@@ -175,5 +246,5 @@ int scheduler_step_one(Scheduler* s, Project* p, uint64_t now_ms, uint64_t* out_
             return 1;
         }
     }
-    return 0; // none runnable (all waiting/inactive)
+    return 0;
 }
