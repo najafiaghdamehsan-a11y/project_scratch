@@ -13,13 +13,15 @@ extern "C" {
         int step_mode;   // 1 => step-by-step
         int do_step;     // UI sets this to 1 to execute exactly one step
 
-        // Scratch-like control
         int running;              // 1 => scripts are running (after green flag)
         int stop_all;             // 1 => request stop all (one-shot)
         uint64_t current_block_id;// for debug highlight
 
-        // NEW: scheduler state
-        Scheduler sched;
+        Scheduler sched;          // scheduler state
+
+        // NEW: key event plumbing
+        int key_pending;          // 1 => a key event waiting
+        int last_key;             // last keycode (SDL_Keycode as int)
     } Runtime;
 
     void runtime_init(Runtime* r);
@@ -27,10 +29,13 @@ extern "C" {
     void runtime_set_step_mode(Runtime* r, int step_mode);
     void runtime_request_step(Runtime* r);
 
-    void runtime_green_flag(Runtime* r);   // start running
-    void runtime_stop_all(Runtime* r);     // stop everything
+    void runtime_green_flag(Runtime* r);
+    void runtime_stop_all(Runtime* r);
     int  runtime_is_running(const Runtime* r);
     uint64_t runtime_current_block(const Runtime* r);
+
+    // NEW: UI -> Engine event
+    void runtime_post_key(Runtime* r, int keycode);
 
     void runtime_tick(Runtime* r, Project* p);
 

@@ -1,8 +1,9 @@
 #include "engine/runtime.h"
 #include "engine/safety.h"
 #include "core/log.h"
+#include <cstdio>
 
-// NEW: works with multi-thread scheduler (threads[16])
+// For multi-thread scheduler (threads[16])
 static int sched_any_active(const Scheduler* s) {
     for (int i = 0; i < 16; i++) {
         if (s->threads[i].active) return 1;
@@ -21,6 +22,10 @@ void runtime_init(Runtime* r) {
     r->current_block_id = 0;
 
     scheduler_init(&r->sched);
+
+    // NEW
+    r->key_pending = 0;
+    r->last_key = 0;
 }
 
 void runtime_set_paused(Runtime* r, int paused) { r->paused = paused; }
@@ -47,7 +52,21 @@ void runtime_stop_all(Runtime* r) {
 int runtime_is_running(const Runtime* r) { return r->running; }
 uint64_t runtime_current_block(const Runtime* r) { return r->current_block_id; }
 
+// NEW
+void runtime_post_key(Runtime* r, int keycode) {
+    r->last_key = keycode;
+    r->key_pending = 1;
+}
+
 void runtime_tick(Runtime* r, Project* p) {
+    // NEW: log key events even if paused/stopped
+    if (r->key_pending) {
+        static char keybuf[32];
+        std::snprintf(keybuf, sizeof(keybuf), "%d", r->last_key);
+        log_write(LogRecord{r->cycle, 0, "EVENT", "KeyDown", keybuf, LOG_INFO});
+        r->key_pending = 0;
+    }
+
     // 1) stop all first
     if (r->stop_all) {
         r->running = 0;
@@ -77,12 +96,7 @@ void runtime_tick(Runtime* r, Project* p) {
     for (int i = 0; i < max_steps; i++) {
         bid = 0;
         int did = scheduler_step_one(&r->sched, p, now, &bid, &budget);
-
-        // If no instruction ran, it might be because:
-        // - all threads are waiting
-        // - OR all threads are inactive
-        // We break and decide below.
-        if (!did) break;
+        if (!did) break; // all waiting/inactive
 
         executed_any = 1;
         r->current_block_id = bid;
@@ -98,7 +112,7 @@ void runtime_tick(Runtime* r, Project* p) {
         return;
     }
 
-    // 5) If ALL threads finished, stop running automatically
+    // 5) if all threads finished, stop running
     if (!sched_any_active(&r->sched)) {
         r->running = 0;
         r->current_block_id = 0;
@@ -106,7 +120,6 @@ void runtime_tick(Runtime* r, Project* p) {
         return;
     }
 
-    // Optional: log only when something executed
     if (executed_any) {
         log_write(LogRecord{r->cycle, 0, "EXEC", "Block", "executed", LOG_INFO});
     }
