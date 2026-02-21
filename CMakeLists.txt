@@ -8,14 +8,22 @@ find_package(SDL2 CONFIG REQUIRED)
 find_package(SDL2_image CONFIG REQUIRED)
 
 add_executable(project_scratch
-        src/main.cpp
-        src/core/log.cpp
-        src/model/model.cpp
-        src/io/serializer.cpp
-        src/engine/runtime.cpp
-        src/model/project_io.cpp
-        src/model/model_ops.cpp
-        src/ui/app.cpp
+		src/main.cpp
+		src/core/log.cpp
+
+		src/model/model.cpp
+		src/model/model_ops.cpp
+		src/model/project_io.cpp
+
+		src/io/serializer.cpp
+
+		src/engine/runtime.cpp
+		src/engine/safety.cpp
+		src/engine/scheduler.cpp
+		src/engine/value.cpp
+		src/engine/vars.cpp
+
+		src/ui/app.cpp
 )
 
 target_include_directories(project_scratch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

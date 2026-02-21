@@ -1,5 +1,7 @@
 #pragma once
 #include "model/model.h"
+#include "engine/scheduler.h"
+#include "engine/vars.h"      // NEW
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -9,8 +11,25 @@ extern "C" {
     typedef struct Runtime {
         uint64_t cycle;
         int paused;
-        int step_mode;   // 1 => step-by-step
-        int do_step;     // UI sets this to 1 to execute exactly one step
+        int step_mode;
+        int do_step;
+
+        int running;
+        int stop_all;
+        uint64_t current_block_id;
+
+        Scheduler sched;
+
+        // Key events
+        int key_pending;
+        int last_key;
+
+        // Broadcast plumbing
+        int msg_pending;
+        int msg_id;
+
+        // NEW: Variables store (engine-side for now)
+        VarStore vars;
     } Runtime;
 
     void runtime_init(Runtime* r);
@@ -18,7 +37,14 @@ extern "C" {
     void runtime_set_step_mode(Runtime* r, int step_mode);
     void runtime_request_step(Runtime* r);
 
-    // “One tick” of execution (later you’ll run scripts here)
+    void runtime_green_flag(Runtime* r);
+    void runtime_stop_all(Runtime* r);
+    int  runtime_is_running(const Runtime* r);
+    uint64_t runtime_current_block(const Runtime* r);
+
+    void runtime_post_key(Runtime* r, int keycode);
+    void runtime_post_broadcast(Runtime* r, int msg_id);
+
     void runtime_tick(Runtime* r, Project* p);
 
 #ifdef __cplusplus

@@ -33,10 +33,17 @@ int app_run(Project* project, Runtime* runtime) {
 
             // Temporary keyboard controls for engine testing:
             // P = pause/resume, S = toggle step mode, N = do one step
-            if (e.type == SDL_KEYDOWN) {
+            // G = green flag start, X = stop all
+            if (e.type == SDL_KEYDOWN && e.key.repeat == 0) {
+                // NEW: forward every keydown to engine
+                runtime_post_key(runtime, (int)e.key.keysym.sym);
+
                 if (e.key.keysym.sym == SDLK_p) runtime_set_paused(runtime, !runtime->paused);
                 if (e.key.keysym.sym == SDLK_s) runtime_set_step_mode(runtime, !runtime->step_mode);
                 if (e.key.keysym.sym == SDLK_n) runtime_request_step(runtime);
+
+                if (e.key.keysym.sym == SDLK_g) runtime_green_flag(runtime);
+                if (e.key.keysym.sym == SDLK_x) runtime_stop_all(runtime);
             }
         }
 
@@ -45,7 +52,7 @@ int app_run(Project* project, Runtime* runtime) {
         SDL_SetRenderDrawColor(ren, 20, 20, 20, 255);
         SDL_RenderClear(ren);
 
-        // Placeholder: draw sprite as a square (later: texture/costume)
+        // Placeholder: draw sprite as a square
         if (project->sprite_count > 0 && project->sprites[0].visible) {
             int cx = 600 + (int)project->sprites[0].x;
             int cy = 350 - (int)project->sprites[0].y;
