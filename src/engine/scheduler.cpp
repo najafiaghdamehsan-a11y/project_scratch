@@ -2,7 +2,11 @@
 #include "engine/safety.h"
 #include <cmath>
 
-// ---- tiny RNG (no SDL, deterministic-ish) ----
+// Scratch stage size (logical coords)
+static const double STAGE_HALF_W = 240.0;
+static const double STAGE_HALF_H = 180.0;
+
+// ---- tiny RNG (no SDL) ----
 static uint32_t g_rng = 0x12345678u;
 static uint32_t xorshift32(void) {
     uint32_t x = g_rng;
@@ -15,10 +19,16 @@ static uint32_t xorshift32(void) {
 static double rand01(void) {
     return (double)(xorshift32() & 0xFFFFFF) / (double)0x1000000; // [0,1)
 }
+static double rand_range(double lo, double hi) {
+    return lo + (hi - lo) * rand01();
+}
 
-// ---- helpers ----
+// ---- math helpers ----
 static double deg2rad(double deg) {
     return deg * 3.14159265358979323846 / 180.0;
+}
+static double rad2deg(double rad) {
+    return rad * 180.0 / 3.14159265358979323846;
 }
 
 // Scratch-like convention: 0=up, 90=right
@@ -27,6 +37,32 @@ static void sprite_move_steps(Sprite* s, double steps) {
     double r = deg2rad(d);
     s->x += steps * std::sin(r);
     s->y += steps * std::cos(r);
+}
+
+static void sprite_bounce_if_needed(Sprite* s) {
+    // direction vector (dx,dy) where 0=up => dx=sin, dy=cos
+    double d = wrap_angle_deg(s->dir);
+    double r = deg2rad(d);
+    double dx = std::sin(r);
+    double dy = std::cos(r);
+
+    int hit_v = 0;
+    int hit_h = 0;
+
+    if (s->x > STAGE_HALF_W) { s->x = STAGE_HALF_W; hit_v = 1; }
+    if (s->x < -STAGE_HALF_W){ s->x = -STAGE_HALF_W; hit_v = 1; }
+    if (s->y > STAGE_HALF_H) { s->y = STAGE_HALF_H; hit_h = 1; }
+    if (s->y < -STAGE_HALF_H){ s->y = -STAGE_HALF_H; hit_h = 1; }
+
+    if (!hit_v && !hit_h) return;
+
+    if (hit_v) dx = -dx;
+    if (hit_h) dy = -dy;
+
+    // convert back to Scratch direction
+    // we used dx=sin, dy=cos => direction = atan2(dx, dy)
+    double new_deg = rad2deg(std::atan2(dx, dy));
+    s->dir = wrap_angle_deg(new_deg);
 }
 
 static int eval_cond(CondCode c, double a, const Project* p) {
@@ -52,65 +88,6 @@ static void thread_start(Thread* t, const Instr* code, int len) {
     t->rep_top = 0;
 }
 
-// ---- Demo scripts ----
-//
-// Script A: repeat 120 {
-//   move 6
-//   if (x > 200) then turn 180 else turn 15
-//   wait 20ms
-// }
-static const Instr SCRIPT_A[] = {
-    // idx:0
-    {101, OP_REPEAT_BEGIN, 0.0, 9, 120, COND_TRUE},
-    {102, OP_MOVE_STEPS,   6.0, 0,   0, COND_TRUE},
-
-    // if x > 200
-    // if false jump -> idx 6 (false branch start)
-    {103, OP_IF_BEGIN,   200.0, 6,   0, COND_SPRITE_X_GT},
-
-    // true branch
-    {104, OP_TURN_DEG,   180.0, 0,   0, COND_TRUE},
-
-    // else: jump to idx 8 (after ENDIF)
-    {105, OP_ELSE,         0.0, 8,   0, COND_TRUE},
-
-    // false branch
-    {106, OP_TURN_DEG,    15.0, 0,   0, COND_TRUE},
-
-    {107, OP_ENDIF,        0.0, 0,   0, COND_TRUE},
-
-    {108, OP_WAIT_MS,     20.0, 0,   0, COND_TRUE},
-    {109, OP_REPEAT_END,   0.0, 0,   0, COND_TRUE},
-    {110, OP_END,          0.0, 0,   0, COND_TRUE},
-};
-
-// Script B: repeat 200 {
-//   if random < 0.5 then move 3 else move -3
-//   wait 15ms
-// }
-static const Instr SCRIPT_B[] = {
-    {201, OP_REPEAT_BEGIN, 0.0, 8, 200, COND_TRUE},
-
-    // if random < 0.5
-    // if false jump -> idx 5 (false branch)
-    {202, OP_IF_BEGIN,     0.5, 5,   0, COND_RANDOM_LT},
-
-    // true branch
-    {203, OP_MOVE_STEPS,   3.0, 0,   0, COND_TRUE},
-
-    // else jump -> idx 7 (after ENDIF)
-    {204, OP_ELSE,         0.0, 7,   0, COND_TRUE},
-
-    // false branch
-    {205, OP_MOVE_STEPS,  -3.0, 0,   0, COND_TRUE},
-
-    {206, OP_ENDIF,        0.0, 0,   0, COND_TRUE},
-
-    {207, OP_WAIT_MS,     15.0, 0,   0, COND_TRUE},
-    {208, OP_REPEAT_END,   0.0, 0,   0, COND_TRUE},
-    {209, OP_END,          0.0, 0,   0, COND_TRUE},
-};
-
 void scheduler_init(Scheduler* s) {
     for (int i = 0; i < 16; i++) {
         s->threads[i].active = 0;
@@ -134,6 +111,36 @@ void scheduler_stop_all(Scheduler* s) {
     }
 }
 
+// ---- Demo scripts ----
+//
+// Script A: forever {
+//   move 8
+//   if on edge bounce
+//   wait 20ms
+// }
+static const Instr SCRIPT_A[] = {
+    {101, OP_FOREVER_BEGIN, 0,0, 0,0, COND_TRUE},
+    {102, OP_MOVE_STEPS,    8,0, 0,0, COND_TRUE},
+    {103, OP_IF_ON_EDGE_BOUNCE, 0,0, 0,0, COND_TRUE},
+    {104, OP_WAIT_MS,      20,0, 0,0, COND_TRUE},
+    // forever end jumps back to index 0
+    {105, OP_FOREVER_END,   0,0, 0,0, COND_TRUE}, // jump set below in code (we’ll hardcode in handler)
+};
+
+// Script B: repeat 20 {
+//   go to random position
+//   set y 0
+//   wait 150ms
+// }
+static const Instr SCRIPT_B[] = {
+    {201, OP_REPEAT_BEGIN, 0,0, 5, 20, COND_TRUE},
+    {202, OP_GOTO_RANDOM,  0,0, 0,  0, COND_TRUE},
+    {203, OP_SET_Y,        0,0, 0,  0, COND_TRUE},
+    {204, OP_WAIT_MS,    150,0, 0,  0, COND_TRUE},
+    {205, OP_REPEAT_END,   0,0, 0,  0, COND_TRUE},
+    {206, OP_END,          0,0, 0,  0, COND_TRUE},
+};
+
 void scheduler_start_demo(Scheduler* s) {
     scheduler_stop_all(s);
 
@@ -146,11 +153,9 @@ void scheduler_start_demo(Scheduler* s) {
 static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_block_id, int* budget) {
     if (!t->active || !t->code || t->code_len <= 0) return 0;
 
-    // waiting?
     if (t->wake_ms != 0 && now_ms < t->wake_ms) return 0;
     t->wake_ms = 0;
 
-    // watchdog budget
     if (!watchdog_allow_step(budget)) return 0;
 
     if (t->pc < 0 || t->pc >= t->code_len) {
@@ -164,6 +169,7 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
     Sprite* spr = (p && p->sprite_count > 0) ? &p->sprites[0] : nullptr;
 
     switch (in.op) {
+        // Motion
         case OP_MOVE_STEPS:
             if (spr) sprite_move_steps(spr, in.a);
             return 1;
@@ -172,23 +178,43 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
             if (spr) spr->dir = wrap_angle_deg(spr->dir + in.a);
             return 1;
 
+        case OP_SET_X:
+            if (spr) spr->x = clampd(in.a, -STAGE_HALF_W, STAGE_HALF_W);
+            return 1;
+
+        case OP_SET_Y:
+            if (spr) spr->y = clampd(in.a, -STAGE_HALF_H, STAGE_HALF_H);
+            return 1;
+
+        case OP_CHANGE_X:
+            if (spr) spr->x = clampd(spr->x + in.a, -STAGE_HALF_W, STAGE_HALF_W);
+            return 1;
+
+        case OP_CHANGE_Y:
+            if (spr) spr->y = clampd(spr->y + in.a, -STAGE_HALF_H, STAGE_HALF_H);
+            return 1;
+
+        case OP_GOTO_RANDOM:
+            if (spr) {
+                spr->x = rand_range(-STAGE_HALF_W, STAGE_HALF_W);
+                spr->y = rand_range(-STAGE_HALF_H, STAGE_HALF_H);
+            }
+            return 1;
+
+        case OP_IF_ON_EDGE_BOUNCE:
+            if (spr) sprite_bounce_if_needed(spr);
+            return 1;
+
+        // Control
         case OP_WAIT_MS:
             t->wake_ms = now_ms + (uint64_t)in.a;
             return 1;
 
         case OP_REPEAT_BEGIN: {
             int n = in.count;
+            if (n <= 0) { t->pc = in.jump; return 1; }
 
-            if (n <= 0) {
-                t->pc = in.jump; // skip loop
-                return 1;
-            }
-
-            if (t->rep_top >= 32) { // nesting limit
-                t->active = 0;
-                return 1;
-            }
-
+            if (t->rep_top >= 32) { t->active = 0; return 1; }
             t->rep_left[t->rep_top] = n;
             t->rep_begin_pc[t->rep_top] = t->pc;
             t->rep_top++;
@@ -207,17 +233,23 @@ static int step_thread(Thread* t, Project* p, uint64_t now_ms, uint64_t* out_blo
             return 1;
         }
 
+        // Forever
+        case OP_FOREVER_BEGIN:
+            return 1;
+
+        case OP_FOREVER_END:
+            // For demo, jump back to 0 (start of script)
+            t->pc = 0;
+            return 1;
+
+        // IF/ELSE
         case OP_IF_BEGIN: {
             int ok = eval_cond(in.cond, in.a, p);
-            if (!ok) {
-                // jump to false branch start (ELSE block or direct false body)
-                t->pc = in.jump;
-            }
+            if (!ok) t->pc = in.jump;
             return 1;
         }
 
         case OP_ELSE:
-            // skip false branch
             t->pc = in.jump;
             return 1;
 
