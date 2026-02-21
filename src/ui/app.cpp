@@ -37,6 +37,8 @@ int app_run(Project* project, Runtime* runtime) {
                 if (e.key.keysym.sym == SDLK_p) runtime_set_paused(runtime, !runtime->paused);
                 if (e.key.keysym.sym == SDLK_s) runtime_set_step_mode(runtime, !runtime->step_mode);
                 if (e.key.keysym.sym == SDLK_n) runtime_request_step(runtime);
+                //if (e.key.keysym.sym == SDLK_g) runtime_green_flag(runtime); // start running
+                //if (e.key.keysym.sym == SDLK_x) runtime_stop_all(runtime);   // stop all
             }
         }
 
