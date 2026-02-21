@@ -3,7 +3,9 @@
 
 uint64_t time_now_ms(void) {
     using namespace std::chrono;
-    return (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    return (uint64_t)duration_cast<milliseconds>(
+        steady_clock::now().time_since_epoch()
+    ).count();
 }
 
 double clampd(double v, double lo, double hi) {
@@ -13,7 +15,6 @@ double clampd(double v, double lo, double hi) {
 }
 
 double wrap_angle_deg(double deg) {
-    // wraps to [0,360)
     while (deg >= 360.0) deg -= 360.0;
     while (deg < 0.0) deg += 360.0;
     return deg;

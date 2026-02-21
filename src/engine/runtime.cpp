@@ -1,6 +1,6 @@
 #include "engine/runtime.h"
-#include "core/log.h"
 #include "engine/safety.h"
+#include "core/log.h"
 
 void runtime_init(Runtime* r) {
     r->cycle = 0;
@@ -8,9 +8,11 @@ void runtime_init(Runtime* r) {
     r->step_mode = 0;
     r->do_step = 0;
 
-    r->running = 0;            // start NOT running (Scratch-like)
+    r->running = 0;
     r->stop_all = 0;
     r->current_block_id = 0;
+
+    scheduler_init(&r->sched);
 }
 
 void runtime_set_paused(Runtime* r, int paused) { r->paused = paused; }
@@ -25,6 +27,8 @@ void runtime_green_flag(Runtime* r) {
     r->do_step = 0;
     r->current_block_id = 0;
 
+    scheduler_start_demo(&r->sched);
+
     log_write(LogRecord{0, 0, "EVENT", "GreenFlag", "start", LOG_INFO});
 }
 
@@ -36,36 +40,59 @@ int runtime_is_running(const Runtime* r) { return r->running; }
 uint64_t runtime_current_block(const Runtime* r) { return r->current_block_id; }
 
 void runtime_tick(Runtime* r, Project* p) {
-    // 1) handle stop request first (no watchdog here)
+    // 1) stop all first
     if (r->stop_all) {
         r->running = 0;
         r->stop_all = 0;
         r->current_block_id = 0;
+        scheduler_stop_all(&r->sched);
         log_write(LogRecord{r->cycle, 0, "CTRL", "StopAll", "stop", LOG_INFO});
         return;
     }
 
-    // 2) normal gates
+    // 2) gates
     if (r->paused) return;
     if (!r->running) return;
+
+    // step-by-step gate
     if (r->step_mode && !r->do_step) return;
+    const int max_steps = (r->step_mode ? 1 : 64); // normal mode can do a few per frame
     r->do_step = 0;
 
-    // 3) watchdog budget for this tick (later: used inside loops)
-    int budget = 2000;
-    if (!watchdog_allow_step(&budget)) {
+    // 3) execute up to max_steps, with watchdog budget
+    uint64_t now = time_now_ms();
+    int budget = 2000; // total allowed block-steps this frame
+    uint64_t bid = 0;
+
+    int executed_any = 0;
+    for (int i = 0; i < max_steps; i++) {
+        bid = 0;
+        int did = scheduler_step_one(&r->sched, p, now, &bid, &budget);
+        if (!did) break;           // waiting or inactive
+        executed_any = 1;
+
+        r->current_block_id = bid; // last executed block
+        r->cycle++;
+
+        // If scheduler finished, stop running automatically
+        if (!r->sched.t.active) {
+            r->running = 0;
+            log_write(LogRecord{r->cycle, 0, "CTRL", "ScriptEnd", "stop", LOG_INFO});
+            break;
+        }
+    }
+
+    // 4) watchdog exhausted (budget hit)
+    if (budget <= 0) {
         r->running = 0;
         r->current_block_id = 0;
+        scheduler_stop_all(&r->sched);
         log_write(LogRecord{r->cycle, 0, "WATCHDOG", "Stop", "too many steps", LOG_ERROR});
         return;
     }
 
-    // 4) one engine step
-    r->cycle++;
-
-    if (p->sprite_count > 0) {
-        p->sprites[0].x += 1.0;
+    // Optional: log only when something executed (keeps console cleaner)
+    if (executed_any) {
+        log_write(LogRecord{r->cycle, 0, "EXEC", "Block", "executed", LOG_INFO});
     }
-
-    log_write(LogRecord{r->cycle, 0, "TICK", "Sprite1.x", "x += 1", LOG_INFO});
 }

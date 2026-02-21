@@ -14,6 +14,7 @@ add_executable(project_scratch
         src/io/serializer.cpp
         src/engine/runtime.cpp
 	    src/engine/safety.cpp
+		src/engine/scheduler.cpp
         src/ui/app.cpp
 )
 
