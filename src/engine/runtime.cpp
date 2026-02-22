@@ -3,7 +3,6 @@
 #include "core/log.h"
 #include <cstdio>
 
-// For multi-thread scheduler (threads[16])
 static int sched_any_active(const Scheduler* s) {
     for (int i = 0; i < 16; i++) {
         if (s->threads[i].active) return 1;
@@ -23,21 +22,54 @@ void runtime_init(Runtime* r) {
 
     scheduler_init(&r->sched);
 
-    // key event plumbing
     r->key_pending = 0;
     r->last_key = 0;
 
-    // broadcast plumbing
     r->msg_pending = 0;
     r->msg_id = 0;
 
-    // NEW: variables
     varstore_init(&r->vars);
+
+    // NEW: scripts
+    r->script_count = 0;
+    for (int i = 0; i < RUNTIME_MAX_SCRIPTS; i++) r->script_len[i] = 0;
 }
 
 void runtime_set_paused(Runtime* r, int paused) { r->paused = paused; }
 void runtime_set_step_mode(Runtime* r, int step_mode) { r->step_mode = step_mode; }
 void runtime_request_step(Runtime* r) { r->do_step = 1; }
+
+int runtime_set_scripts(Runtime* r, const ScriptDef* scripts, int count) {
+    if (!r) return 0;
+
+    if (!scripts || count <= 0) {
+        r->script_count = 0;
+        for (int i = 0; i < RUNTIME_MAX_SCRIPTS; i++) r->script_len[i] = 0;
+        return 1;
+    }
+
+    if (count > RUNTIME_MAX_SCRIPTS) return 0;
+
+    // copy
+    for (int i = 0; i < count; i++) {
+        if (!scripts[i].code || scripts[i].len <= 0) {
+            r->script_len[i] = 0;
+            continue;
+        }
+        if (scripts[i].len > RUNTIME_MAX_CODE_PER_SCRIPT) return 0;
+
+        for (int j = 0; j < scripts[i].len; j++) {
+            r->scripts[i][j] = scripts[i].code[j];
+        }
+        r->script_len[i] = scripts[i].len;
+    }
+
+    // clear remaining
+    for (int i = count; i < RUNTIME_MAX_SCRIPTS; i++) r->script_len[i] = 0;
+
+    r->script_count = count;
+    return 1;
+}
 
 void runtime_green_flag(Runtime* r) {
     r->cycle = 0;
@@ -53,16 +85,30 @@ void runtime_green_flag(Runtime* r) {
     r->msg_pending = 0;
     r->msg_id = 0;
 
-    // NEW: reset variables each run (Scratch-like)
+    // reset variables each run (Scratch-like)
     varstore_clear(&r->vars);
 
-    scheduler_start_demo(&r->sched);
+    // If workspace scripts exist => run them; else run demo (or do nothing if you prefer)
+    if (r->script_count > 0) {
+        ScriptDef defs[RUNTIME_MAX_SCRIPTS];
+        int n = r->script_count;
+        if (n > RUNTIME_MAX_SCRIPTS) n = RUNTIME_MAX_SCRIPTS;
 
-    log_write(LogRecord{0, 0, "EVENT", "GreenFlag", "start", LOG_INFO});
+        for (int i = 0; i < n; i++) {
+            defs[i].code = r->scripts[i];
+            defs[i].len  = r->script_len[i];
+        }
+
+        scheduler_start_many(&r->sched, defs, n);
+        log_write(LogRecord{0, 0, "EVENT", "GreenFlag", "start(workspace scripts)", LOG_INFO});
+    } else {
+        scheduler_start_demo(&r->sched);
+        log_write(LogRecord{0, 0, "EVENT", "GreenFlag", "start(demo)", LOG_INFO});
+    }
 }
 
 void runtime_stop_all(Runtime* r) {
-    r->stop_all = 1; // processed in tick (one-shot)
+    r->stop_all = 1;
 }
 
 int runtime_is_running(const Runtime* r) { return r->running; }
@@ -83,7 +129,6 @@ void runtime_tick(Runtime* r, Project* p) {
     if (r->key_pending) {
         int k = r->last_key;
 
-        // log keycode
         char keybuf[32];
         std::snprintf(keybuf, sizeof(keybuf), "%d", k);
         log_write(LogRecord{r->cycle, 0, "EVENT", "KeyDown", keybuf, LOG_INFO});
@@ -94,7 +139,6 @@ void runtime_tick(Runtime* r, Project* p) {
             log_write(LogRecord{r->cycle, 0, "EVENT", "BroadcastRequest", "msg=1", LOG_INFO});
         }
 
-        // Start key scripts only while running (Scratch-like)
         if (r->running) {
             scheduler_start_on_key(&r->sched, k);
         }
@@ -133,12 +177,11 @@ void runtime_tick(Runtime* r, Project* p) {
     if (r->paused) return;
     if (!r->running) return;
 
-    // step-by-step gate
     if (r->step_mode && !r->do_step) return;
     const int max_steps = (r->step_mode ? 1 : 64);
     r->do_step = 0;
 
-    // 3) execute up to max_steps, with watchdog budget
+    // 3) execute with watchdog budget
     const uint64_t now = time_now_ms();
     int budget = 2000;
     uint64_t bid = 0;
@@ -148,7 +191,6 @@ void runtime_tick(Runtime* r, Project* p) {
     for (int i = 0; i < max_steps; i++) {
         bid = 0;
 
-        // NEW SIGNATURE: pass &r->vars
         int did = scheduler_step_one(&r->sched, p, &r->vars, now, &bid, &budget);
         if (!did) break;
 

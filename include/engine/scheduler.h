@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include "model/model.h"
 #include "engine/value.h"
-#include "engine/vars.h"   // NEW
+#include "engine/vars.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,14 +43,14 @@ typedef enum OpCode {
     OP_CHANGE_X_POP,
     OP_CHANGE_Y_POP,
 
-    // NEW: Variables
-    OP_READ_VAR_PUSH,   // count = var_id, pushes Value
-    OP_SET_VAR_POP,     // count = var_id, pops Value -> sets var
-    OP_CHANGE_VAR_POP,  // count = var_id, pops num -> var += num
+    // Variables
+    OP_READ_VAR_PUSH,
+    OP_SET_VAR_POP,
+    OP_CHANGE_VAR_POP,
 
-    // NEW: stack-based setters (useful with variables)
-    OP_SET_X_POP,       // pops num -> sprite.x = num
-    OP_SET_Y_POP,       // pops num -> sprite.y = num
+    // stack-based setters
+    OP_SET_X_POP,
+    OP_SET_Y_POP,
 
     OP_END
 } OpCode;
@@ -96,6 +96,12 @@ typedef struct Scheduler {
     int rr_index;
 } Scheduler;
 
+// NEW: script descriptor for starting many stacks
+typedef struct ScriptDef {
+    const Instr* code;
+    int len;
+} ScriptDef;
+
 void scheduler_init(Scheduler* s);
 void scheduler_start_demo(Scheduler* s);
 void scheduler_stop_all(Scheduler* s);
@@ -103,7 +109,10 @@ void scheduler_stop_all(Scheduler* s);
 void scheduler_start_on_key(Scheduler* s, int keycode);
 void scheduler_broadcast(Scheduler* s, int msg_id);
 
-// SIGNATURE CHANGED: now takes VarStore*
+// NEW: start N scripts concurrently on threads[0..N-1]
+void scheduler_start_many(Scheduler* s, const ScriptDef* scripts, int count);
+
+// takes VarStore*
 int scheduler_step_one(Scheduler* s, Project* p, VarStore* vars,
                        uint64_t now_ms, uint64_t* out_block_id, int* budget);
 

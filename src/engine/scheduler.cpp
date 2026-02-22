@@ -91,13 +91,13 @@ static void thread_start(Thread* t, const Instr* code, int len) {
 
 // ---------------- DEMOS ----------------
 
-// Green flag scripts (unchanged)
+// Green flag scripts
 static const Instr SCRIPT_A[] = {
     {101, OP_FOREVER_BEGIN, 0,0, 0,0, COND_TRUE},
     {102, OP_MOVE_STEPS,    8,0, 0,0, COND_TRUE},
     {103, OP_IF_ON_EDGE_BOUNCE, 0,0, 0,0, COND_TRUE},
     {104, OP_WAIT_MS,      20,0, 0,0, COND_TRUE},
-    {105, OP_FOREVER_END,   0,0, 0,0, COND_TRUE}, // jump=0 => loop
+    {105, OP_FOREVER_END,   0,0, 0,0, COND_TRUE},
 };
 
 static const Instr SCRIPT_B[] = {
@@ -137,44 +137,10 @@ static const Instr KEY_C[] = {
     {607, OP_END,           0,0, 0,   0, COND_TRUE},
 };
 
-// NEW: KEY_V (118) variable demo using var0
-// var0 = -240
-// forever:
-//   var0 = var0 + 4
-//   set x to var0
-//   if (var0 > 240) then var0 = -240
-//   wait 16
-static const Instr KEY_V[] = {
-    {701, OP_PUSH_NUM,     -240,0, 0,0, COND_TRUE},
-    {702, OP_SET_VAR_POP,     0,0, 0,0, COND_TRUE}, // count=0 => var0 (set by below initializer? we use count field!)
-    {703, OP_FOREVER_BEGIN,   0,0, 0,0, COND_TRUE},
-
-    {704, OP_READ_VAR_PUSH,   0,0, 0,0, COND_TRUE}, // var0
-    {705, OP_PUSH_NUM,        4,0, 0,0, COND_TRUE},
-    {706, OP_ADD,             0,0, 0,0, COND_TRUE},
-    {707, OP_SET_VAR_POP,     0,0, 0,0, COND_TRUE}, // var0
-
-    {708, OP_READ_VAR_PUSH,   0,0, 0,0, COND_TRUE},
-    {709, OP_SET_X_POP,       0,0, 0,0, COND_TRUE},
-
-    {710, OP_READ_VAR_PUSH,   0,0, 0,0, COND_TRUE},
-    {711, OP_PUSH_NUM,      240,0, 0,0, COND_TRUE},
-    {712, OP_GT,              0,0, 0,0, COND_TRUE},
-    {713, OP_IF_POP,          0,0, 716,0, COND_TRUE}, // if false jump -> 716
-    {714, OP_PUSH_NUM,     -240,0, 0,0, COND_TRUE},
-    {715, OP_SET_VAR_POP,     0,0, 0,0, COND_TRUE}, // var0
-    {716, OP_WAIT_MS,        16,0, 0,0, COND_TRUE},
-
-    {717, OP_FOREVER_END,     0,0, 703,0, COND_TRUE}, // loop back to FOREVER_BEGIN
-};
-
-// IMPORTANT: For var ops, we use Instr.count as var_id.
-// So we patch those entries below with count=0 using designated init style is not allowed here,
-// so we will rely on the fact count is the 6th field. We'll re-list with correct count values:
-
 static const Instr KEY_V_FIXED[] = {
     {701, OP_PUSH_NUM,     -240,0, 0, 0, COND_TRUE},
-    {702, OP_SET_VAR_POP,     0,0, 0, 0, COND_TRUE}, // count patched below in code at start
+    {702, OP_SET_VAR_POP,     0,0, 0, 0, COND_TRUE},
+
     {703, OP_FOREVER_BEGIN,   0,0, 0, 0, COND_TRUE},
 
     {704, OP_READ_VAR_PUSH,   0,0, 0, 0, COND_TRUE},
@@ -240,6 +206,21 @@ void scheduler_start_demo(Scheduler* s) {
     s->rr_index = 0;
 }
 
+// NEW: Start many scripts at once (threads 0..count-1)
+void scheduler_start_many(Scheduler* s, const ScriptDef* scripts, int count) {
+    scheduler_stop_all(s);
+    if (!scripts || count <= 0) return;
+
+    int n = count;
+    if (n > 16) n = 16;
+
+    for (int i = 0; i < n; i++) {
+        if (!scripts[i].code || scripts[i].len <= 0) continue;
+        thread_start(&s->threads[i], scripts[i].code, scripts[i].len);
+    }
+    s->rr_index = 0;
+}
+
 static int find_free_thread(Scheduler* s) {
     for (int i = 0; i < 16; i++) if (!s->threads[i].active) return i;
     return -1;
@@ -254,8 +235,6 @@ void scheduler_start_on_key(Scheduler* s, int keycode) {
     if (keycode == 99) { thread_start(&s->threads[idx], KEY_C, (int)(sizeof(KEY_C)/sizeof(KEY_C[0]))); return; }
 
     if (keycode == 118) {
-        // Start KEY_V_FIXED but we need var_id=0 in count for var ops.
-        // Easiest: reuse the same array and interpret count=0 (already is 0), so we can start directly.
         thread_start(&s->threads[idx], KEY_V_FIXED, (int)(sizeof(KEY_V_FIXED)/sizeof(KEY_V_FIXED[0])));
         return;
     }
@@ -335,7 +314,6 @@ static int step_thread(Thread* t, Project* p, VarStore* vars, uint64_t now_ms, u
             return 1;
         }
 
-        // Non-stack IF (kept)
         case OP_IF_BEGIN: {
             int ok = eval_cond(in.cond, in.a, p);
             if (!ok) t->pc = in.jump;
@@ -402,7 +380,7 @@ static int step_thread(Thread* t, Project* p, VarStore* vars, uint64_t now_ms, u
             return 1;
         }
 
-        // NEW: Variables
+        // Variables
         case OP_READ_VAR_PUSH: {
             Value v = varstore_get(vars, in.count);
             stack_push(t, v);
