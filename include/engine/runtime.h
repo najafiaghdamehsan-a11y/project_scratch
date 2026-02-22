@@ -1,23 +1,29 @@
 #pragma once
 #include "model/model.h"
 #include "engine/scheduler.h"
-#include "engine/vars.h"      // NEW
+#include "engine/vars.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+    // Main compiled script buffer (UI compiles blocks into Instr[])
+#define RUNTIME_MAX_MAIN_CODE 2048
+
     typedef struct Runtime {
+        // Debug / stepping
         uint64_t cycle;
         int paused;
-        int step_mode;
-        int do_step;
+        int step_mode;   // 1 => step-by-step
+        int do_step;     // UI sets to 1 to execute exactly one step
 
-        int running;
-        int stop_all;
-        uint64_t current_block_id;
+        // Scratch-like control
+        int running;              // 1 => scripts running after green flag
+        int stop_all;             // request stop all (one-shot)
+        uint64_t current_block_id;// last executed block (for debug highlight)
 
+        // Scheduler/interpreter
         Scheduler sched;
 
         // Key events
@@ -28,8 +34,12 @@ extern "C" {
         int msg_pending;
         int msg_id;
 
-        // NEW: Variables store (engine-side for now)
+        // Variables store (engine-side)
         VarStore vars;
+
+        // NEW: workspace compiled code (single top-stack for now)
+        Instr main_code[RUNTIME_MAX_MAIN_CODE];
+        int   main_code_len;
     } Runtime;
 
     void runtime_init(Runtime* r);
@@ -44,6 +54,10 @@ extern "C" {
 
     void runtime_post_key(Runtime* r, int keycode);
     void runtime_post_broadcast(Runtime* r, int msg_id);
+
+    // NEW: set the script that green flag should run
+    // returns 1 on success, 0 on failure (e.g., too large)
+    int runtime_set_main_script(Runtime* r, const Instr* code, int len);
 
     void runtime_tick(Runtime* r, Project* p);
 

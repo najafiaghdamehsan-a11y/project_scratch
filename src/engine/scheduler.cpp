@@ -240,6 +240,15 @@ void scheduler_start_demo(Scheduler* s) {
     s->rr_index = 0;
 }
 
+void scheduler_start_custom(Scheduler* s, const Instr* code, int len) {
+    scheduler_stop_all(s);
+    if (!code || len <= 0) return;
+
+    // start on thread 0
+    thread_start(&s->threads[0], code, len);
+    s->rr_index = 0;
+}
+
 static int find_free_thread(Scheduler* s) {
     for (int i = 0; i < 16; i++) if (!s->threads[i].active) return i;
     return -1;

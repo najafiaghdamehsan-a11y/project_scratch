@@ -122,6 +122,115 @@ static void draw_circle_button(SDL_Renderer* ren, int cx, int cy, int r, SDL_Col
     }
 }
 
+// ------------------------------
+// NEW: Compile workspace stack -> Instr[]
+// ------------------------------
+static int iabs_int(int v) { return v < 0 ? -v : v; }
+
+static int be_find_below(const BlockEditor* be, int idx) {
+    const int GAP = 8;
+    const int TOL_X = 6;
+    const int TOL_Y = 12;
+
+    SDL_Rect r = be->blocks[idx].r;
+    int target_x = r.x;
+    int target_y = r.y + r.h + GAP;
+
+    int best = -1;
+    int best_dy = 999999;
+
+    for (int j = 0; j < be->block_count; j++) {
+        if (j == idx) continue;
+        SDL_Rect o = be->blocks[j].r;
+
+        int dx = iabs_int(o.x - target_x);
+        int dy = iabs_int(o.y - target_y);
+
+        if (dx <= TOL_X && dy <= TOL_Y) {
+            if (dy < best_dy) { best_dy = dy; best = j; }
+        }
+    }
+    return best;
+}
+
+static int be_has_above(const BlockEditor* be, int idx) {
+    for (int i = 0; i < be->block_count; i++) {
+        if (i == idx) continue;
+        if (be_find_below(be, i) == idx) return 1;
+    }
+    return 0;
+}
+
+static int be_find_top_head(const BlockEditor* be) {
+    int head = -1;
+    for (int i = 0; i < be->block_count; i++) {
+        if (be_has_above(be, i)) continue; // not a head
+
+        if (head == -1) { head = i; continue; }
+
+        SDL_Rect a = be->blocks[i].r;
+        SDL_Rect b = be->blocks[head].r;
+
+        if (a.y < b.y || (a.y == b.y && a.x < b.x)) head = i;
+    }
+    return head;
+}
+
+static int compile_workspace_top_stack(const BlockEditor* be, Instr* out, int cap) {
+    if (!be || be->block_count <= 0) return 0;
+
+    int head = be_find_top_head(be);
+    if (head < 0) return 0;
+
+    int len = 0;
+    int idx = head;
+    int guard = 0;
+
+    while (idx >= 0 && idx < be->block_count && guard < MAX_WORKSPACE_BLOCKS) {
+        const BlockInstance* b = &be->blocks[idx];
+
+        if (b->type == BLK_MOVE_STEPS) {
+            if (len + 1 > cap) break;
+            out[len++] = Instr{ b->id, OP_MOVE_STEPS, (double)b->a, 0.0, 0, 0, COND_TRUE };
+        } else if (b->type == BLK_TURN_DEG) {
+            if (len + 1 > cap) break;
+            out[len++] = Instr{ b->id, OP_TURN_DEG, (double)b->a, 0.0, 0, 0, COND_TRUE };
+        } else if (b->type == BLK_GOTO_XY) {
+            if (len + 2 > cap) break;
+            out[len++] = Instr{ b->id, OP_SET_X, (double)b->a, 0.0, 0, 0, COND_TRUE };
+            out[len++] = Instr{ b->id, OP_SET_Y, (double)b->b, 0.0, 0, 0, COND_TRUE };
+        }
+
+        idx = be_find_below(be, idx);
+        guard++;
+    }
+
+    return len;
+}
+
+static void start_from_workspace(Runtime* runtime, const BlockEditor* be) {
+    Instr code[512];
+    int len = compile_workspace_top_stack(be, code, 512);
+
+    if (len <= 0) {
+        // Scratch-like: no scripts => nothing runs
+        runtime_set_main_script(runtime, NULL, 0);
+        runtime_stop_all(runtime);
+        log_write(LogRecord{0,0,"UI","GreenFlag","no workspace blocks",LOG_INFO});
+        return;
+    }
+
+    runtime_set_main_script(runtime, code, len);
+    runtime_green_flag(runtime);
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "compiled %d instr", len);
+    log_write(LogRecord{0,0,"UI","GreenFlag",buf,LOG_INFO});
+}
+
+// ------------------------------
+// app_run
+// ------------------------------
 int app_run(Project* project, Runtime* runtime) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         log_write(LogRecord{0,0,"SDL","Init failed", SDL_GetError(), LOG_ERROR});
@@ -180,9 +289,9 @@ int app_run(Project* project, Runtime* runtime) {
         int W, H;
         SDL_GetWindowSize(win, &W, &H);
 
-        // --- SAFE LAYOUT CLAMPING (fix negative widths on small windows) ---
-        const int min_left = CAT_W + PAL_W + 220; // minimum workspace space
-        const int min_right = 240;                // minimum stage/panel width
+        // --- SAFE LAYOUT CLAMPING ---
+        const int min_left  = CAT_W + PAL_W + 220;
+        const int min_right = 240;
 
         int left_w = W - RIGHT;
         if (left_w < min_left) left_w = min_left;
@@ -248,7 +357,7 @@ int app_run(Project* project, Runtime* runtime) {
 
                 int dxg = mx - gf_cx, dyg = my - gf_cy;
                 if (dxg*dxg + dyg*dyg <= gf_r*gf_r) {
-                    runtime_green_flag(runtime);
+                    start_from_workspace(runtime, &be);   // NEW
                 }
                 int dxs = mx - st_cx, dys = my - st_cy;
                 if (dxs*dxs + dys*dys <= gf_r*gf_r) {
@@ -271,12 +380,17 @@ int app_run(Project* project, Runtime* runtime) {
             if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode k = e.key.keysym.sym;
 
-                if (k == SDLK_g) runtime_green_flag(runtime);
+                // Send ALL key presses into runtime (for key-events category)
+                runtime_post_key(runtime, (int)k);
+
+                // Engine test controls
+                if (k == SDLK_g) start_from_workspace(runtime, &be); // NEW
                 if (k == SDLK_x) runtime_stop_all(runtime);
                 if (k == SDLK_p) runtime_set_paused(runtime, !runtime->paused);
                 if (k == SDLK_s) runtime_set_step_mode(runtime, !runtime->step_mode);
                 if (k == SDLK_n) runtime_request_step(runtime);
 
+                // Sprite controls (active sprite)
                 if (project && project->sprite_count > 0) {
                     int a = project->active_sprite_index;
                     if (a < 0) a = 0;
@@ -309,9 +423,10 @@ int app_run(Project* project, Runtime* runtime) {
         draw_filled_rect(ren, topbar, 133, 94, 205, 255);
         draw_text(ren, font, 14, 14, "project_scratch      Code   Costumes   Sounds", SDL_Color{255,255,255,255});
 
-        // IMPORTANT: this must match block_editor.h/.cpp
+        // Block editor area
         block_editor_render(&be, ren, font);
 
+        // Stage
         draw_rect(ren, rect_stage, 120, 120, 120, 255);
         draw_filled_rect(ren, rect_stage, 255, 255, 255, 255);
 
@@ -323,6 +438,7 @@ int app_run(Project* project, Runtime* runtime) {
         draw_circle_button(ren, gf_cx, gf_cy, gf_r, SDL_Color{70, 200, 70, 255}, SDL_Color{30, 120, 30, 255});
         draw_circle_button(ren, st_cx, st_cy, gf_r, SDL_Color{230, 80, 80, 255}, SDL_Color{140, 30, 30, 255});
 
+        // Draw sprites
         if (project && project->sprite_count > 0) {
             for (int i = 0; i < project->sprite_count; i++) {
                 const Sprite* s = &project->sprites[i];
@@ -347,6 +463,7 @@ int app_run(Project* project, Runtime* runtime) {
             }
         }
 
+        // Sprite panel
         draw_filled_rect(ren, rect_sprite_panel, 245, 245, 248, 255);
         draw_rect(ren, rect_sprite_panel, 200, 200, 210, 255);
 

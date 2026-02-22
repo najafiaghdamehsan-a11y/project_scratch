@@ -1,9 +1,10 @@
+// src/engine/runtime.cpp
 #include "engine/runtime.h"
 #include "engine/safety.h"
 #include "core/log.h"
 #include <cstdio>
 
-// For multi-thread scheduler (threads[16])
+// Helper: any active scheduler threads?
 static int sched_any_active(const Scheduler* s) {
     for (int i = 0; i < 16; i++) {
         if (s->threads[i].active) return 1;
@@ -23,21 +24,41 @@ void runtime_init(Runtime* r) {
 
     scheduler_init(&r->sched);
 
-    // key event plumbing
+    // Key events
     r->key_pending = 0;
     r->last_key = 0;
 
-    // broadcast plumbing
+    // Broadcast plumbing
     r->msg_pending = 0;
     r->msg_id = 0;
 
-    // NEW: variables
+    // Variables
     varstore_init(&r->vars);
+
+    // Workspace compiled code
+    r->main_code_len = 0;
 }
 
 void runtime_set_paused(Runtime* r, int paused) { r->paused = paused; }
 void runtime_set_step_mode(Runtime* r, int step_mode) { r->step_mode = step_mode; }
 void runtime_request_step(Runtime* r) { r->do_step = 1; }
+
+int runtime_set_main_script(Runtime* r, const Instr* code, int len) {
+    if (!r) return 0;
+
+    if (!code || len <= 0) {
+        r->main_code_len = 0;
+        return 1;
+    }
+
+    if (len > RUNTIME_MAX_MAIN_CODE) return 0;
+
+    for (int i = 0; i < len; i++) {
+        r->main_code[i] = code[i];
+    }
+    r->main_code_len = len;
+    return 1;
+}
 
 void runtime_green_flag(Runtime* r) {
     r->cycle = 0;
@@ -53,12 +74,17 @@ void runtime_green_flag(Runtime* r) {
     r->msg_pending = 0;
     r->msg_id = 0;
 
-    // NEW: reset variables each run (Scratch-like)
+    // Scratch-like: reset vars on new run
     varstore_clear(&r->vars);
 
-    scheduler_start_demo(&r->sched);
-
-    log_write(LogRecord{0, 0, "EVENT", "GreenFlag", "start", LOG_INFO});
+    // Run workspace script if present; otherwise keep demo (so green flag still "does something")
+    if (r->main_code_len > 0) {
+        scheduler_start_custom(&r->sched, r->main_code, r->main_code_len);
+        log_write(LogRecord{0, 0, "EVENT", "GreenFlag", "start(main_code)", LOG_INFO});
+    } else {
+        scheduler_start_demo(&r->sched);
+        log_write(LogRecord{0, 0, "EVENT", "GreenFlag", "start(demo)", LOG_INFO});
+    }
 }
 
 void runtime_stop_all(Runtime* r) {
@@ -83,7 +109,6 @@ void runtime_tick(Runtime* r, Project* p) {
     if (r->key_pending) {
         int k = r->last_key;
 
-        // log keycode
         char keybuf[32];
         std::snprintf(keybuf, sizeof(keybuf), "%d", k);
         log_write(LogRecord{r->cycle, 0, "EVENT", "KeyDown", keybuf, LOG_INFO});
@@ -94,7 +119,7 @@ void runtime_tick(Runtime* r, Project* p) {
             log_write(LogRecord{r->cycle, 0, "EVENT", "BroadcastRequest", "msg=1", LOG_INFO});
         }
 
-        // Start key scripts only while running (Scratch-like)
+        // Start key scripts only while running (your current rule)
         if (r->running) {
             scheduler_start_on_key(&r->sched, k);
         }
@@ -148,7 +173,7 @@ void runtime_tick(Runtime* r, Project* p) {
     for (int i = 0; i < max_steps; i++) {
         bid = 0;
 
-        // NEW SIGNATURE: pass &r->vars
+        // scheduler signature uses VarStore*
         int did = scheduler_step_one(&r->sched, p, &r->vars, now, &bid, &budget);
         if (!did) break;
 
