@@ -108,6 +108,7 @@ void scheduler_stop_all(Scheduler* s);
 
 void scheduler_start_on_key(Scheduler* s, int keycode);
 void scheduler_broadcast(Scheduler* s, int msg_id);
+void scheduler_start_custom(Scheduler* s, const Instr* code, int len);
 
 // NEW: start N scripts concurrently on threads[0..N-1]
 void scheduler_start_many(Scheduler* s, const ScriptDef* scripts, int count);

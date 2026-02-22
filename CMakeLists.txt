@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(SDL2 CONFIG REQUIRED)
 find_package(SDL2_image CONFIG REQUIRED)
+find_package(SDL2_ttf CONFIG REQUIRED)
 
 add_executable(project_scratch
 		src/main.cpp
@@ -24,7 +25,9 @@ add_executable(project_scratch
 		src/engine/vars.cpp
 
 		src/ui/app.cpp
+		src/ui/block_editor.cpp
 )
 
 target_include_directories(project_scratch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(project_scratch PRIVATE SDL2::SDL2 SDL2_image::SDL2_image)
+target_compile_definitions(project_scratch PRIVATE PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(project_scratch PRIVATE SDL2::SDL2 SDL2_image::SDL2_image SDL2_ttf::SDL2_ttf)

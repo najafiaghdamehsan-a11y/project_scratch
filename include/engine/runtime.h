@@ -1,15 +1,12 @@
 #pragma once
 #include "model/model.h"
 #include "engine/scheduler.h"
-#include "engine/vars.h"
+#include "engine/vars.h"      // NEW
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define RUNTIME_MAX_SCRIPTS 16
-#define RUNTIME_MAX_CODE_PER_SCRIPT 512
 
     typedef struct Runtime {
         uint64_t cycle;
@@ -31,13 +28,8 @@ extern "C" {
         int msg_pending;
         int msg_id;
 
-        // Variables store
+        // NEW: Variables store (engine-side for now)
         VarStore vars;
-
-        // NEW: workspace scripts (compiled from multiple stacks)
-        Instr scripts[RUNTIME_MAX_SCRIPTS][RUNTIME_MAX_CODE_PER_SCRIPT];
-        int   script_len[RUNTIME_MAX_SCRIPTS];
-        int   script_count;
     } Runtime;
 
     void runtime_init(Runtime* r);
@@ -52,11 +44,6 @@ extern "C" {
 
     void runtime_post_key(Runtime* r, int keycode);
     void runtime_post_broadcast(Runtime* r, int msg_id);
-
-    // NEW: set the scripts that green flag will run.
-    // Copies into runtime storage (safe).
-    // Returns 1 on success, 0 on failure (too many / too big).
-    int runtime_set_scripts(Runtime* r, const ScriptDef* scripts, int count);
 
     void runtime_tick(Runtime* r, Project* p);
 

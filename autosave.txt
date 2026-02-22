@@ -1,0 +1,3 @@
+SPRITES 1
+ACTIVE 0
+S 1|Sprite1|0|0|90|100|1
