@@ -1,7 +1,9 @@
 #include "engine/runtime.h"
 #include "engine/safety.h"
+#include "engine/scheduler.h"
 #include "core/log.h"
 #include <cstdio>
+#include <cstring> // memcpy
 
 // For multi-thread scheduler (threads[16])
 static int sched_any_active(const Scheduler* s) {
@@ -31,13 +33,29 @@ void runtime_init(Runtime* r) {
     r->msg_pending = 0;
     r->msg_id = 0;
 
-    // NEW: variables
+    // variables
     varstore_init(&r->vars);
+
+    // main script buffer
+    r->main_len = 0;
 }
 
 void runtime_set_paused(Runtime* r, int paused) { r->paused = paused; }
 void runtime_set_step_mode(Runtime* r, int step_mode) { r->step_mode = step_mode; }
 void runtime_request_step(Runtime* r) { r->do_step = 1; }
+
+void runtime_set_main_script(Runtime* r, const Instr* code, int len) {
+    if (!r) return;
+
+    if (!code || len <= 0) {
+        r->main_len = 0;
+        return;
+    }
+
+    if (len > RUNTIME_MAX_MAIN_CODE) len = RUNTIME_MAX_MAIN_CODE;
+    std::memcpy(r->main_code, code, sizeof(Instr) * (size_t)len);
+    r->main_len = len;
+}
 
 void runtime_green_flag(Runtime* r) {
     r->cycle = 0;
@@ -53,12 +71,24 @@ void runtime_green_flag(Runtime* r) {
     r->msg_pending = 0;
     r->msg_id = 0;
 
-    // NEW: reset variables each run (Scratch-like)
+    // Scratch-like: reset variables each run
     varstore_clear(&r->vars);
 
-    scheduler_start_demo(&r->sched);
+    // IMPORTANT: run what UI compiled. If none, run nothing.
+    scheduler_stop_all(&r->sched);
 
-    log_write(LogRecord{0, 0, "EVENT", "GreenFlag", "start", LOG_INFO});
+    if (r->main_len > 0) {
+        ScriptDef one;
+        one.code = r->main_code;
+        one.len  = r->main_len;
+
+        scheduler_start_many(&r->sched, &one, 1);
+
+        log_write(LogRecord{0,0,"EVENT","GreenFlag","start main script", LOG_INFO});
+    } else {
+        r->running = 0;
+        log_write(LogRecord{0,0,"EVENT","GreenFlag","no scripts", LOG_INFO});
+    }
 }
 
 void runtime_stop_all(Runtime* r) {
@@ -138,7 +168,7 @@ void runtime_tick(Runtime* r, Project* p) {
     const int max_steps = (r->step_mode ? 1 : 64);
     r->do_step = 0;
 
-    // 3) execute up to max_steps, with watchdog budget
+    // 3) execute up to max_steps with watchdog budget
     const uint64_t now = time_now_ms();
     int budget = 2000;
     uint64_t bid = 0;
@@ -148,7 +178,7 @@ void runtime_tick(Runtime* r, Project* p) {
     for (int i = 0; i < max_steps; i++) {
         bid = 0;
 
-        // NEW SIGNATURE: pass &r->vars
+        // pass &r->vars
         int did = scheduler_step_one(&r->sched, p, &r->vars, now, &bid, &budget);
         if (!did) break;
 

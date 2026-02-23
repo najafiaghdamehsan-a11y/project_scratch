@@ -4,6 +4,8 @@
 #include "engine/vars.h"      // NEW
 #include <stdint.h>
 
+#define RUNTIME_MAX_MAIN_CODE 2048
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -28,8 +30,12 @@ extern "C" {
         int msg_pending;
         int msg_id;
 
-        // NEW: Variables store (engine-side for now)
+        // Variables store (engine-side for now)
         VarStore vars;
+
+        // UI-compiled “main stack” (copied here, because UI builds it on stack)
+        Instr main_code[RUNTIME_MAX_MAIN_CODE];
+        int   main_len;
     } Runtime;
 
     void runtime_init(Runtime* r);
@@ -44,6 +50,9 @@ extern "C" {
 
     void runtime_post_key(Runtime* r, int keycode);
     void runtime_post_broadcast(Runtime* r, int msg_id);
+
+    // called by UI when user presses green flag (compiled blocks)
+    void runtime_set_main_script(Runtime* r, const Instr* code, int len);
 
     void runtime_tick(Runtime* r, Project* p);
 
