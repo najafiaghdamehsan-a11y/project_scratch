@@ -8,8 +8,7 @@
 extern "C" {
 #endif
 
-#define RUNTIME_MAX_SCRIPTS 16
-#define RUNTIME_MAX_CODE_PER_SCRIPT 512
+#define RUNTIME_MAX_MAIN_CODE 2048
 
     typedef struct Runtime {
         uint64_t cycle;
@@ -34,10 +33,9 @@ extern "C" {
         // Variables store
         VarStore vars;
 
-        // NEW: workspace scripts (compiled from multiple stacks)
-        Instr scripts[RUNTIME_MAX_SCRIPTS][RUNTIME_MAX_CODE_PER_SCRIPT];
-        int   script_len[RUNTIME_MAX_SCRIPTS];
-        int   script_count;
+        // NEW: UI-compiled “main stack” (copied here, because UI builds it on stack)
+        Instr main_code[RUNTIME_MAX_MAIN_CODE];
+        int   main_len;
     } Runtime;
 
     void runtime_init(Runtime* r);
@@ -53,10 +51,8 @@ extern "C" {
     void runtime_post_key(Runtime* r, int keycode);
     void runtime_post_broadcast(Runtime* r, int msg_id);
 
-    // NEW: set the scripts that green flag will run.
-    // Copies into runtime storage (safe).
-    // Returns 1 on success, 0 on failure (too many / too big).
-    int runtime_set_scripts(Runtime* r, const ScriptDef* scripts, int count);
+    // NEW: called by UI when user presses green flag (compiled blocks)
+    void runtime_set_main_script(Runtime* r, const Instr* code, int len);
 
     void runtime_tick(Runtime* r, Project* p);
 
