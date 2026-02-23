@@ -8,8 +8,9 @@
 #include <stdio.h>
 #include <string.h>
 
+// -------------------- small drawing helpers --------------------
 static int pt_in_rect(int x, int y, const SDL_Rect* r) {
-    return x >= r->x && y >= r->y && x < (r->x + r->w) && y < (r->y + r->h);
+    return x >= r->x && y >= r->y && x < (r->x + r->w) && y >= r->y && y < (r->y + r->h);
 }
 
 static void draw_filled_rect(SDL_Renderer* ren, SDL_Rect r, uint8_t rr, uint8_t gg, uint8_t bb, uint8_t aa) {
@@ -39,6 +40,7 @@ static void draw_text(SDL_Renderer* ren, TTF_Font* font, int x, int y, const cha
     SDL_DestroyTexture(t);
 }
 
+// -------------------- stage title helpers --------------------
 static void update_window_title(SDL_Window* win, const Project* p) {
     const char* name = "None";
     if (p && p->sprite_count > 0) {
@@ -52,6 +54,7 @@ static void update_window_title(SDL_Window* win, const Project* p) {
     SDL_SetWindowTitle(win, title);
 }
 
+// -------------------- sprite panel actions --------------------
 static void project_add_sprite(Project* p) {
     if (!p) return;
     if (p->sprite_count >= MAX_SPRITES) return;
@@ -122,9 +125,9 @@ static void draw_circle_button(SDL_Renderer* ren, int cx, int cy, int r, SDL_Col
     }
 }
 
-// ------------------------------
-// NEW: Compile workspace stack -> Instr[]
-// ------------------------------
+// ============================================================
+//  NEW: Compile workspace stack -> Instr[] with control flow
+// ============================================================
 static int iabs_int(int v) { return v < 0 ? -v : v; }
 
 static int be_find_below(const BlockEditor* be, int idx) {
@@ -164,59 +167,229 @@ static int be_has_above(const BlockEditor* be, int idx) {
 static int be_find_top_head(const BlockEditor* be) {
     int head = -1;
     for (int i = 0; i < be->block_count; i++) {
-        if (be_has_above(be, i)) continue; // not a head
+        if (be_has_above(be, i)) continue;
 
         if (head == -1) { head = i; continue; }
 
         SDL_Rect a = be->blocks[i].r;
         SDL_Rect b = be->blocks[head].r;
-
         if (a.y < b.y || (a.y == b.y && a.x < b.x)) head = i;
     }
     return head;
 }
 
-static int compile_workspace_top_stack(const BlockEditor* be, Instr* out, int cap) {
-    if (!be || be->block_count <= 0) return 0;
+static int be_find_top_greenflag_head(const BlockEditor* be) {
+    int best = -1;
+    for (int i = 0; i < be->block_count; i++) {
+        if (be->blocks[i].type != BLK_EVENT_GREEN_FLAG) continue;
+        if (be_has_above(be, i)) continue; // must be a head
 
-    int head = be_find_top_head(be);
-    if (head < 0) return 0;
+        if (best == -1) { best = i; continue; }
+        SDL_Rect a = be->blocks[i].r;
+        SDL_Rect b = be->blocks[best].r;
+        if (a.y < b.y || (a.y == b.y && a.x < b.x)) best = i;
+    }
+    return best;
+}
 
-    int len = 0;
-    int idx = head;
+static int blk_is_if(BlockType t) {
+    return t == BLK_IF_X_GT || t == BLK_IF_X_LT || t == BLK_IF_Y_GT || t == BLK_IF_Y_LT || t == BLK_IF_RANDOM_LT;
+}
+
+static CondCode blk_to_cond(BlockType t) {
+    switch (t) {
+        case BLK_IF_X_GT:      return COND_SPRITE_X_GT;
+        case BLK_IF_X_LT:      return COND_SPRITE_X_LT;
+        case BLK_IF_Y_GT:      return COND_SPRITE_Y_GT;
+        case BLK_IF_Y_LT:      return COND_SPRITE_Y_LT;
+        case BLK_IF_RANDOM_LT: return COND_RANDOM_LT;
+        default:               return COND_TRUE;
+    }
+}
+
+static int compile_workspace_script(const BlockEditor* be, Instr* out, int cap) {
+    if (!be || be->block_count <= 0 || !out || cap <= 0) return 0;
+
+    // Prefer a green-flag head if present, otherwise compile the top-most head stack.
+    int start = -1;
+    int gf = be_find_top_greenflag_head(be);
+    if (gf != -1) start = be_find_below(be, gf);
+    else {
+        int head = be_find_top_head(be);
+        start = head;
+    }
+    if (start < 0) return 0;
+
+    // Collect linear order
+    int seq[MAX_WORKSPACE_BLOCKS];
+    int seq_n = 0;
+
+    int idx = start;
     int guard = 0;
-
     while (idx >= 0 && idx < be->block_count && guard < MAX_WORKSPACE_BLOCKS) {
-        const BlockInstance* b = &be->blocks[idx];
-
-        if (b->type == BLK_MOVE_STEPS) {
-            if (len + 1 > cap) break;
-            out[len++] = Instr{ b->id, OP_MOVE_STEPS, (double)b->a, 0.0, 0, 0, COND_TRUE };
-        } else if (b->type == BLK_TURN_DEG) {
-            if (len + 1 > cap) break;
-            out[len++] = Instr{ b->id, OP_TURN_DEG, (double)b->a, 0.0, 0, 0, COND_TRUE };
-        } else if (b->type == BLK_GOTO_XY) {
-            if (len + 2 > cap) break;
-            out[len++] = Instr{ b->id, OP_SET_X, (double)b->a, 0.0, 0, 0, COND_TRUE };
-            out[len++] = Instr{ b->id, OP_SET_Y, (double)b->b, 0.0, 0, 0, COND_TRUE };
-        }
-
+        seq[seq_n++] = idx;
         idx = be_find_below(be, idx);
         guard++;
     }
+
+    int len = 0;
+
+    // Stacks for patching jumps (instruction indices!)
+    int rep_stack[64]; int rep_top = 0;
+    int for_stack[64]; int for_top = 0;
+
+    struct IfItem { int if_ip; int else_ip; };
+    IfItem if_stack[64]; int if_top = 0;
+
+    auto emit = [&](const Instr& in) -> int {
+        if (len >= cap) return 0;
+        out[len++] = in;
+        return 1;
+    };
+
+    auto after_current = [&]() -> int { return len; };
+
+    for (int si = 0; si < seq_n; si++) {
+        const BlockInstance* b = &be->blocks[seq[si]];
+
+        switch (b->type) {
+            // ---------- Motion ----------
+            case BLK_MOVE_STEPS:
+                if (!emit(Instr{ b->id, OP_MOVE_STEPS, (double)b->a, 0.0, 0, 0, COND_TRUE })) return len;
+                break;
+
+            case BLK_TURN_DEG:
+                if (!emit(Instr{ b->id, OP_TURN_DEG, (double)b->a, 0.0, 0, 0, COND_TRUE })) return len;
+                break;
+
+            case BLK_GOTO_XY:
+                if (len + 2 > cap) return len;
+                out[len++] = Instr{ b->id, OP_SET_X, (double)b->a, 0.0, 0, 0, COND_TRUE };
+                out[len++] = Instr{ b->id, OP_SET_Y, (double)b->b, 0.0, 0, 0, COND_TRUE };
+                break;
+
+            // ---------- Events ----------
+            case BLK_EVENT_GREEN_FLAG:
+                // Hat itself does not emit code (we start after it)
+                break;
+
+            // ---------- Control ----------
+            case BLK_WAIT_MS:
+                if (!emit(Instr{ b->id, OP_WAIT_MS, (double)b->a, 0.0, 0, 0, COND_TRUE })) return len;
+                break;
+
+            case BLK_REPEAT_BEGIN: {
+                int ip = len;
+                if (!emit(Instr{ b->id, OP_REPEAT_BEGIN, 0.0, 0.0, 0, b->a, COND_TRUE })) return len;
+                if (rep_top < 64) rep_stack[rep_top++] = ip;
+                break;
+            }
+
+            case BLK_REPEAT_END: {
+                int end_ip = len;
+                if (!emit(Instr{ b->id, OP_REPEAT_END, 0.0, 0.0, 0, 0, COND_TRUE })) return len;
+
+                if (rep_top > 0) {
+                    int beg_ip = rep_stack[--rep_top];
+                    // If repeat count <= 0, OP_REPEAT_BEGIN jumps to "after end"
+                    out[beg_ip].jump = after_current();
+                }
+                break;
+            }
+
+            case BLK_FOREVER_BEGIN: {
+                int ip = len;
+                if (!emit(Instr{ b->id, OP_FOREVER_BEGIN, 0.0, 0.0, 0, 0, COND_TRUE })) return len;
+                if (for_top < 64) for_stack[for_top++] = ip;
+                break;
+            }
+
+            case BLK_FOREVER_END: {
+                int end_ip = len;
+                if (!emit(Instr{ b->id, OP_FOREVER_END, 0.0, 0.0, 0, 0, COND_TRUE })) return len;
+
+                int target = 0;
+                if (for_top > 0) target = for_stack[--for_top];
+                out[end_ip].jump = target;
+                break;
+            }
+
+            // ---------- IF / ELSE / ENDIF ----------
+            default:
+                if (blk_is_if(b->type)) {
+                    CondCode cc = blk_to_cond(b->type);
+                    double a = (double)b->a;
+                    if (cc == COND_RANDOM_LT) a = a / 100.0; // UI uses percent
+                    int ip = len;
+                    if (!emit(Instr{ b->id, OP_IF_BEGIN, a, 0.0, 0, 0, cc })) return len;
+
+                    if (if_top < 64) {
+                        if_stack[if_top].if_ip = ip;
+                        if_stack[if_top].else_ip = -1;
+                        if_top++;
+                    }
+                }
+                else if (b->type == BLK_ELSE) {
+                    int ip = len;
+                    if (!emit(Instr{ b->id, OP_ELSE, 0.0, 0.0, 0, 0, COND_TRUE })) return len;
+
+                    if (if_top > 0) {
+                        // If false -> jump to else body start (ip + 1)
+                        IfItem& top = if_stack[if_top - 1];
+                        out[top.if_ip].jump = ip + 1;
+                        top.else_ip = ip;
+                    }
+                }
+                else if (b->type == BLK_ENDIF) {
+                    int ip = len;
+                    if (!emit(Instr{ b->id, OP_ENDIF, 0.0, 0.0, 0, 0, COND_TRUE })) return len;
+
+                    if (if_top > 0) {
+                        IfItem top = if_stack[--if_top];
+                        int after_endif = after_current();
+
+                        // If there was an else marker: else jumps over else-body to after endif
+                        if (top.else_ip != -1) {
+                            out[top.else_ip].jump = after_endif;
+                        } else {
+                            // No else: if-false jumps to after endif
+                            out[top.if_ip].jump = after_endif;
+                        }
+                    }
+                }
+                // Unknown block types: ignore for now
+                break;
+        }
+    }
+
+    // Patch any unclosed IFs to end
+    int end_target = len; // before OP_END
+    while (if_top > 0) {
+        IfItem top = if_stack[--if_top];
+        out[top.if_ip].jump = end_target;
+        if (top.else_ip != -1) out[top.else_ip].jump = end_target;
+    }
+
+    // Patch any unclosed REPEAT_BEGIN to end (skip if count<=0)
+    while (rep_top > 0) {
+        int beg_ip = rep_stack[--rep_top];
+        out[beg_ip].jump = end_target;
+    }
+
+    // Finish with OP_END so thread terminates cleanly
+    if (len < cap) out[len++] = Instr{ 0, OP_END, 0.0, 0.0, 0, 0, COND_TRUE };
 
     return len;
 }
 
 static void start_from_workspace(Runtime* runtime, const BlockEditor* be) {
-    Instr code[512];
-    int len = compile_workspace_top_stack(be, code, 512);
+    Instr code[RUNTIME_MAX_MAIN_CODE];
+    int len = compile_workspace_script(be, code, RUNTIME_MAX_MAIN_CODE);
 
     if (len <= 0) {
-        // Scratch-like: no scripts => nothing runs
         runtime_set_main_script(runtime, NULL, 0);
         runtime_stop_all(runtime);
-        log_write(LogRecord{0,0,"UI","GreenFlag","no workspace blocks",LOG_INFO});
+        log_write(LogRecord{0,0,"UI","GreenFlag","no compilable script",LOG_INFO});
         return;
     }
 
@@ -228,9 +401,9 @@ static void start_from_workspace(Runtime* runtime, const BlockEditor* be) {
     log_write(LogRecord{0,0,"UI","GreenFlag",buf,LOG_INFO});
 }
 
-// ------------------------------
+// ============================================================
 // app_run
-// ------------------------------
+// ============================================================
 int app_run(Project* project, Runtime* runtime) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         log_write(LogRecord{0,0,"SDL","Init failed", SDL_GetError(), LOG_ERROR});
@@ -345,7 +518,6 @@ int app_run(Project* project, Runtime* runtime) {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
 
-            // Block editor can process mouse + delete/backspace
             block_editor_handle_event(&be, &e);
 
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) {
@@ -357,7 +529,7 @@ int app_run(Project* project, Runtime* runtime) {
 
                 int dxg = mx - gf_cx, dyg = my - gf_cy;
                 if (dxg*dxg + dyg*dyg <= gf_r*gf_r) {
-                    start_from_workspace(runtime, &be);   // NEW
+                    start_from_workspace(runtime, &be);
                 }
                 int dxs = mx - st_cx, dys = my - st_cy;
                 if (dxs*dxs + dys*dys <= gf_r*gf_r) {
@@ -370,9 +542,9 @@ int app_run(Project* project, Runtime* runtime) {
 
                 if (pt_in_rect(mx, my, &rect_sprite_list) && project && project->sprite_count > 0) {
                     int row_h = 34;
-                    int idx = (my - rect_sprite_list.y) / row_h;
-                    if (idx >= 0 && idx < project->sprite_count) {
-                        project->active_sprite_index = idx;
+                    int idx2 = (my - rect_sprite_list.y) / row_h;
+                    if (idx2 >= 0 && idx2 < project->sprite_count) {
+                        project->active_sprite_index = idx2;
                     }
                 }
             }
@@ -380,11 +552,11 @@ int app_run(Project* project, Runtime* runtime) {
             if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode k = e.key.keysym.sym;
 
-                // Send ALL key presses into runtime (for key-events category)
+                // Feed key events to runtime (for key-event scripts)
                 runtime_post_key(runtime, (int)k);
 
-                // Engine test controls
-                if (k == SDLK_g) start_from_workspace(runtime, &be); // NEW
+                // Debug controls
+                if (k == SDLK_g) start_from_workspace(runtime, &be);
                 if (k == SDLK_x) runtime_stop_all(runtime);
                 if (k == SDLK_p) runtime_set_paused(runtime, !runtime->paused);
                 if (k == SDLK_s) runtime_set_step_mode(runtime, !runtime->step_mode);
@@ -423,10 +595,8 @@ int app_run(Project* project, Runtime* runtime) {
         draw_filled_rect(ren, topbar, 133, 94, 205, 255);
         draw_text(ren, font, 14, 14, "project_scratch      Code   Costumes   Sounds", SDL_Color{255,255,255,255});
 
-        // Block editor area
         block_editor_render(&be, ren, font);
 
-        // Stage
         draw_rect(ren, rect_stage, 120, 120, 120, 255);
         draw_filled_rect(ren, rect_stage, 255, 255, 255, 255);
 
@@ -438,7 +608,6 @@ int app_run(Project* project, Runtime* runtime) {
         draw_circle_button(ren, gf_cx, gf_cy, gf_r, SDL_Color{70, 200, 70, 255}, SDL_Color{30, 120, 30, 255});
         draw_circle_button(ren, st_cx, st_cy, gf_r, SDL_Color{230, 80, 80, 255}, SDL_Color{140, 30, 30, 255});
 
-        // Draw sprites
         if (project && project->sprite_count > 0) {
             for (int i = 0; i < project->sprite_count; i++) {
                 const Sprite* s = &project->sprites[i];
@@ -463,7 +632,6 @@ int app_run(Project* project, Runtime* runtime) {
             }
         }
 
-        // Sprite panel
         draw_filled_rect(ren, rect_sprite_panel, 245, 245, 248, 255);
         draw_rect(ren, rect_sprite_panel, 200, 200, 210, 255);
 

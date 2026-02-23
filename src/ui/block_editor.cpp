@@ -64,6 +64,21 @@ static const char* block_label(BlockType t, int a, int b) {
         case BLK_MOVE_STEPS: snprintf(buf, sizeof(buf), "move %d steps", a); break;
         case BLK_TURN_DEG:   snprintf(buf, sizeof(buf), "turn %d degrees", a); break;
         case BLK_GOTO_XY:    snprintf(buf, sizeof(buf), "go to x:%d y:%d", a, b); break;
+        case BLK_EVENT_GREEN_FLAG: snprintf(buf, sizeof(buf), "when green flag clicked"); break;
+
+        case BLK_WAIT_MS:          snprintf(buf, sizeof(buf), "wait %d ms", a); break;
+        case BLK_REPEAT_BEGIN:     snprintf(buf, sizeof(buf), "repeat %d", a); break;
+        case BLK_REPEAT_END:       snprintf(buf, sizeof(buf), "end"); break;
+        case BLK_FOREVER_BEGIN:    snprintf(buf, sizeof(buf), "forever"); break;
+        case BLK_FOREVER_END:      snprintf(buf, sizeof(buf), "end"); break;
+
+        case BLK_IF_X_GT:          snprintf(buf, sizeof(buf), "if x > %d", a); break;
+        case BLK_IF_X_LT:          snprintf(buf, sizeof(buf), "if x < %d", a); break;
+        case BLK_IF_Y_GT:          snprintf(buf, sizeof(buf), "if y > %d", a); break;
+        case BLK_IF_Y_LT:          snprintf(buf, sizeof(buf), "if y < %d", a); break;
+        case BLK_IF_RANDOM_LT:     snprintf(buf, sizeof(buf), "if random < %d%%", a); break;
+        case BLK_ELSE:             snprintf(buf, sizeof(buf), "else"); break;
+        case BLK_ENDIF:            snprintf(buf, sizeof(buf), "end"); break;
         default: snprintf(buf, sizeof(buf), "block"); break;
     }
     return buf;
