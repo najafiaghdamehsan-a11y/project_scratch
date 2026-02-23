@@ -22,27 +22,27 @@ extern "C" {
     } BlockCategory;
 
     typedef enum BlockType {
+        // Events
+        BLK_EVENT_GREEN_FLAG = 0,
+
         // Motion
-        BLK_MOVE_STEPS = 0,
+        BLK_MOVE_STEPS,
         BLK_TURN_DEG,
         BLK_GOTO_XY,
 
-        // Events (hat blocks)
-        BLK_EVENT_GREEN_FLAG,     // start of a script stack
-
         // Control
-        BLK_WAIT_MS,              // a = ms
-        BLK_REPEAT_BEGIN,         // a = repeat count
-        BLK_REPEAT_END,           // closes repeat
+        BLK_WAIT_MS,
+        BLK_REPEAT_BEGIN,
+        BLK_REPEAT_END,
         BLK_FOREVER_BEGIN,
-        BLK_FOREVER_END,          // closes forever
+        BLK_FOREVER_END,
 
-        // If/Else/Endif (using your engine's CondCode)
-        BLK_IF_X_GT,              // a = threshold
+        // Simple IF family
+        BLK_IF_X_GT,
         BLK_IF_X_LT,
         BLK_IF_Y_GT,
         BLK_IF_Y_LT,
-        BLK_IF_RANDOM_LT,         // a = percent (0..100)
+        BLK_IF_RANDOM_LT,
         BLK_ELSE,
         BLK_ENDIF,
 

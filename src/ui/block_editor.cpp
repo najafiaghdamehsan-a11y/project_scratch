@@ -233,7 +233,7 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
 
         if (pt_in_rect(mx, my, be->palette_r)) {
             const int pad = 16;
-            const int bh = 40;
+            const int bh = 44;
             const int gap = 10;
 
             BlockType type = BLK_COUNT;
@@ -261,7 +261,7 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
             } else if (be->cat == CAT_EVENTS) {
                 if (pt_in_rect(mx, my, e0)) { type = BLK_EVENT_GREEN_FLAG; }
             } else if (be->cat == CAT_CONTROL) {
-                if (pt_in_rect(mx, my, c0)) { type = BLK_WAIT_MS; a = 1000; }
+                if (pt_in_rect(mx, my, c0)) { type = BLK_WAIT_MS; a = 100; }
                 else if (pt_in_rect(mx, my, c1)) { type = BLK_REPEAT_BEGIN; a = 10; }
                 else if (pt_in_rect(mx, my, c2)) { type = BLK_REPEAT_END; }
                 else if (pt_in_rect(mx, my, c3)) { type = BLK_FOREVER_BEGIN; }
@@ -370,15 +370,18 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font) {
         draw_text(ren, font, row.x + 34, row.y + 10, cat_name((BlockCategory)i), SDL_Color{60,60,60,255});
     }
 
+// palette blocks
+{
     const int pad = 16;
-    const int bh = 40;
+    const int bh  = 44;
     const int gap = 10;
 
-    if (be->cat == CAT_MOTION) {
-        SDL_Color base = cat_color(CAT_MOTION);
-        SDL_Color border = border_from_fill(base);
-        SDL_Color text = text_for_fill(base);
+    SDL_Color base   = cat_color(be->cat);
+    SDL_Color border = SDL_Color{ 40, 70, 140, 255 };
+    SDL_Color text   = SDL_Color{ 255,255,255,255 };
 
+    // Motion
+    if (be->cat == CAT_MOTION) {
         SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad, be->palette_r.w - pad*2, bh };
         SDL_Rect b1{ b0.x, b0.y + bh + gap, b0.w, bh };
         SDL_Rect b2{ b0.x, b1.y + bh + gap, b0.w, bh };
@@ -387,47 +390,53 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font) {
         fill_rect(ren, b1, base); draw_rect(ren, b1, border);
         fill_rect(ren, b2, base); draw_rect(ren, b2, border);
 
-        draw_text(ren, font, b0.x + 12, b0.y + 9, "move 10 steps", text);
-        draw_text(ren, font, b1.x + 12, b1.y + 9, "turn 15 degrees", text);
-        draw_text(ren, font, b2.x + 12, b2.y + 9, "go to x:0 y:0", text);
+        draw_text(ren, font, b0.x + 12, b0.y + 10, "move 10 steps", text);
+        draw_text(ren, font, b1.x + 12, b1.y + 10, "turn 15 degrees", text);
+        draw_text(ren, font, b2.x + 12, b2.y + 10, "go to x:0 y:0", text);
     }
 
-    if (be->cat == CAT_EVENTS) {
-        SDL_Color base = cat_color(CAT_EVENTS);
-        SDL_Color border = border_from_fill(base);
-        SDL_Color text = text_for_fill(base);
+    // Events
+    else if (be->cat == CAT_EVENTS) {
+        SDL_Color ev_border = SDL_Color{ 160, 120, 20, 255 };
 
         SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad, be->palette_r.w - pad*2, bh };
-        fill_rect(ren, b0, base); draw_rect(ren, b0, border);
-        draw_text(ren, font, b0.x + 12, b0.y + 9, "when green flag clicked", text);
+
+        fill_rect(ren, b0, base); draw_rect(ren, b0, ev_border);
+        draw_text(ren, font, b0.x + 12, b0.y + 10, "when green flag clicked", SDL_Color{40,40,40,255});
     }
 
-    if (be->cat == CAT_CONTROL) {
-        SDL_Color base = cat_color(CAT_CONTROL);
-        SDL_Color border = border_from_fill(base);
-        SDL_Color text = text_for_fill(base);
+    // Control
+    else if (be->cat == CAT_CONTROL) {
+        SDL_Color ctrl_border = SDL_Color{ 170, 90, 20, 255 };
 
-        SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad, be->palette_r.w - pad*2, bh };
-        SDL_Rect b1{ b0.x, b0.y + bh + gap, b0.w, bh };
-        SDL_Rect b2{ b1.x, b1.y + bh + gap, b0.w, bh };
-        SDL_Rect b3{ b2.x, b2.y + bh + gap, b0.w, bh };
-        SDL_Rect b4{ b3.x, b3.y + bh + gap, b0.w, bh };
-        SDL_Rect b5{ b4.x, b4.y + bh + gap, b0.w, bh };
-        SDL_Rect b6{ b5.x, b5.y + bh + gap, b0.w, bh };
-        SDL_Rect b7{ b6.x, b6.y + bh + gap, b0.w, bh };
+        SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+        SDL_Rect b1{ b0.x, b0.y + (bh+gap)*1, b0.w, bh };
+        SDL_Rect b2{ b0.x, b0.y + (bh+gap)*2, b0.w, bh };
+        SDL_Rect b3{ b0.x, b0.y + (bh+gap)*3, b0.w, bh };
+        SDL_Rect b4{ b0.x, b0.y + (bh+gap)*4, b0.w, bh };
+        SDL_Rect b5{ b0.x, b0.y + (bh+gap)*5, b0.w, bh };
+        SDL_Rect b6{ b0.x, b0.y + (bh+gap)*6, b0.w, bh };
+        SDL_Rect b7{ b0.x, b0.y + (bh+gap)*7, b0.w, bh };
 
-        SDL_Rect arr[] = { b0,b1,b2,b3,b4,b5,b6,b7 };
-        for (int i = 0; i < 8; i++) { fill_rect(ren, arr[i], base); draw_rect(ren, arr[i], border); }
+        fill_rect(ren, b0, base); draw_rect(ren, b0, ctrl_border);
+        fill_rect(ren, b1, base); draw_rect(ren, b1, ctrl_border);
+        fill_rect(ren, b2, base); draw_rect(ren, b2, ctrl_border);
+        fill_rect(ren, b3, base); draw_rect(ren, b3, ctrl_border);
+        fill_rect(ren, b4, base); draw_rect(ren, b4, ctrl_border);
+        fill_rect(ren, b5, base); draw_rect(ren, b5, ctrl_border);
+        fill_rect(ren, b6, base); draw_rect(ren, b6, ctrl_border);
+        fill_rect(ren, b7, base); draw_rect(ren, b7, ctrl_border);
 
-        draw_text(ren, font, b0.x + 12, b0.y + 9, "wait 1000 ms", text);
-        draw_text(ren, font, b1.x + 12, b1.y + 9, "repeat 10", text);
-        draw_text(ren, font, b2.x + 12, b2.y + 9, "end repeat", text);
-        draw_text(ren, font, b3.x + 12, b3.y + 9, "forever", text);
-        draw_text(ren, font, b4.x + 12, b4.y + 9, "end forever", text);
-        draw_text(ren, font, b5.x + 12, b5.y + 9, "if x > 0", text);
-        draw_text(ren, font, b6.x + 12, b6.y + 9, "else", text);
-        draw_text(ren, font, b7.x + 12, b7.y + 9, "end if", text);
+        draw_text(ren, font, b0.x + 12, b0.y + 10, "wait 100 ms", text);
+        draw_text(ren, font, b1.x + 12, b1.y + 10, "repeat 10", text);
+        draw_text(ren, font, b2.x + 12, b2.y + 10, "end", text);
+        draw_text(ren, font, b3.x + 12, b3.y + 10, "forever", text);
+        draw_text(ren, font, b4.x + 12, b4.y + 10, "end", text);
+        draw_text(ren, font, b5.x + 12, b5.y + 10, "if x > 0", text);
+        draw_text(ren, font, b6.x + 12, b6.y + 10, "else", text);
+        draw_text(ren, font, b7.x + 12, b7.y + 10, "end", text);
     }
+}
 
     for (int i = 0; i < be->block_count; ++i) {
         BlockInstance* bi = &be->blocks[i];
