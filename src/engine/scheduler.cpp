@@ -240,6 +240,29 @@ void scheduler_start_demo(Scheduler* s) {
     s->rr_index = 0;
 }
 
+void scheduler_start_custom(Scheduler* s, const Instr* code, int len) {
+    scheduler_stop_all(s);
+    s->rr_index = 0;
+
+    if (!code || len <= 0) return;
+
+    // Run on thread 0
+    thread_start(&s->threads[0], code, len);
+}
+
+void scheduler_start_many(Scheduler* s, const ScriptDef* scripts, int count) {
+    scheduler_stop_all(s);
+    s->rr_index = 0;
+
+    if (!scripts || count <= 0) return;
+    if (count > 16) count = 16; // threads[16]
+
+    for (int i = 0; i < count; i++) {
+        if (!scripts[i].code || scripts[i].len <= 0) continue;
+        thread_start(&s->threads[i], scripts[i].code, scripts[i].len);
+    }
+}
+
 static int find_free_thread(Scheduler* s) {
     for (int i = 0; i < 16; i++) if (!s->threads[i].active) return i;
     return -1;
