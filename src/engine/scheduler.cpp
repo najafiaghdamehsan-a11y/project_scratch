@@ -467,5 +467,6 @@ int scheduler_step_one(Scheduler* s, Project* p, VarStore* vars,
             return 1;
         }
     }
+
     return 0;
 }
