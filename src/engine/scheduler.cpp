@@ -7,6 +7,19 @@
 static const double STAGE_HALF_W = 240.0;
 static const double STAGE_HALF_H = 180.0;
 
+static Sprite* active_sprite(Project* p) {
+    if (!p || p->sprite_count <= 0) return nullptr;
+    int i = p->active_sprite_index;
+    if (i < 0 || i >= p->sprite_count) i = 0;
+    return &p->sprites[i];
+}
+static const Sprite* active_sprite_c(const Project* p) {
+    if (!p || p->sprite_count <= 0) return nullptr;
+    int i = p->active_sprite_index;
+    if (i < 0 || i >= p->sprite_count) i = 0;
+    return &p->sprites[i];
+}
+
 // RNG
 static uint32_t g_rng = 0x12345678u;
 static uint32_t xorshift32(void) {
@@ -59,7 +72,7 @@ static void sprite_bounce_if_needed(Sprite* s) {
 }
 
 static int eval_cond(CondCode c, double a, const Project* p) {
-    const Sprite* spr = (p && p->sprite_count > 0) ? &p->sprites[0] : nullptr;
+    const Sprite* spr = active_sprite_c(p);
     switch (c) {
         case COND_TRUE: return 1;
         case COND_SPRITE_X_GT: return spr ? (spr->x > a) : 0;
@@ -241,13 +254,16 @@ void scheduler_start_demo(Scheduler* s) {
 }
 
 void scheduler_start_custom(Scheduler* s, const Instr* code, int len) {
-    scheduler_stop_all(s);
-    s->rr_index = 0;
+    if (!s || !code || len <= 0) return;
 
-    if (!code || len <= 0) return;
+    // find a free thread; if none, overwrite thread 0 (or just return)
+    int idx = -1;
+    for (int i = 0; i < 16; i++) {
+        if (!s->threads[i].active) { idx = i; break; }
+    }
+    if (idx < 0) idx = 0;
 
-    // Run on thread 0
-    thread_start(&s->threads[0], code, len);
+    thread_start(&s->threads[idx], code, len);
 }
 
 void scheduler_start_many(Scheduler* s, const ScriptDef* scripts, int count) {
@@ -307,7 +323,7 @@ static int step_thread(Thread* t, Project* p, VarStore* vars, uint64_t now_ms, u
     const Instr in = t->code[t->pc++];
     if (out_block_id) *out_block_id = in.id;
 
-    Sprite* spr = (p && p->sprite_count > 0) ? &p->sprites[0] : nullptr;
+    Sprite* spr = active_sprite(p);
 
     switch (in.op) {
         // Motion
