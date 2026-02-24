@@ -232,6 +232,18 @@ void scheduler_init(Scheduler* s) {
         stack_reset(&s->threads[i]);
     }
     s->rr_index = 0;
+
+    // IO/state
+    s->mouse_x = 0.0;
+    s->mouse_y = 0.0;
+    s->mouse_down = 0;
+    s->timer_start_ms = 0;
+    s->answer_value = 0.0;
+    s->answer_valid = 0;
+    s->ask_pending = 0;
+    s->ask_thread_idx = -1;
+    s->broadcast_pending = 0;
+    s->broadcast_id = 0;
 }
 
 void scheduler_stop_all(Scheduler* s) {
@@ -244,6 +256,37 @@ void scheduler_stop_all(Scheduler* s) {
         s->threads[i].rep_top = 0;
         stack_reset(&s->threads[i]);
     }
+
+    // reset request flags
+    s->ask_pending = 0;
+    s->ask_thread_idx = -1;
+    s->broadcast_pending = 0;
+    s->broadcast_id = 0;
+}
+
+void scheduler_set_mouse(Scheduler* s, double mx, double my, int mouse_down) {
+    if (!s) return;
+    s->mouse_x = mx;
+    s->mouse_y = my;
+    s->mouse_down = mouse_down ? 1 : 0;
+}
+
+void scheduler_set_timer_start(Scheduler* s, uint64_t start_ms) {
+    if (!s) return;
+    s->timer_start_ms = start_ms;
+}
+
+void scheduler_submit_answer(Scheduler* s, double answer) {
+    if (!s) return;
+    s->answer_value = answer;
+    s->answer_valid = 1;
+
+    // unblock waiting thread
+    if (s->ask_thread_idx >= 0 && s->ask_thread_idx < 16) {
+        s->threads[s->ask_thread_idx].wake_ms = 0;
+    }
+    s->ask_pending = 0;
+    s->ask_thread_idx = -1;
 }
 
 void scheduler_start_demo(Scheduler* s) {
@@ -311,7 +354,7 @@ void scheduler_broadcast(Scheduler* s, int msg_id) {
 }
 
 // Interpreter
-static int step_thread(Thread* t, Project* p, VarStore* vars, uint64_t now_ms, uint64_t* out_block_id, int* budget) {
+static int step_thread(Scheduler* s, int thread_idx, Thread* t, Project* p, VarStore* vars, uint64_t now_ms, uint64_t* out_block_id, int* budget) {
     if (!t->active || !t->code || t->code_len <= 0) return 0;
     if (t->wake_ms != 0 && now_ms < t->wake_ms) return 0;
     t->wake_ms = 0;
@@ -460,6 +503,65 @@ static int step_thread(Thread* t, Project* p, VarStore* vars, uint64_t now_ms, u
             return 1;
         }
 
+        // Events / Messaging
+        case OP_BROADCAST:
+            if (s) {
+                s->broadcast_pending = 1;
+                s->broadcast_id = in.count;
+            }
+            return 1;
+
+        // Sensing / Ask
+        case OP_ASK_WAIT:
+            if (s) {
+                // Only one ask at a time.
+                if (s->ask_thread_idx == -1) {
+                    s->ask_pending = 1;
+                    s->ask_thread_idx = thread_idx;
+                    s->answer_valid = 0;
+                    s->answer_value = 0.0;
+                }
+            }
+            // Block this thread until answer arrives.
+            t->wake_ms = UINT64_MAX;
+            return 1;
+
+        case OP_PUSH_ANSWER:
+            stack_push(t, value_num(s ? s->answer_value : 0.0));
+            return 1;
+
+        case OP_PUSH_MOUSE_X:
+            stack_push(t, value_num(s ? s->mouse_x : 0.0));
+            return 1;
+
+        case OP_PUSH_MOUSE_Y:
+            stack_push(t, value_num(s ? s->mouse_y : 0.0));
+            return 1;
+
+        case OP_PUSH_MOUSE_DOWN:
+            stack_push(t, value_bool(s ? s->mouse_down : 0));
+            return 1;
+
+        case OP_PUSH_TIMER: {
+            double sec = 0.0;
+            if (s && s->timer_start_ms != 0 && now_ms >= s->timer_start_ms) {
+                sec = (double)(now_ms - s->timer_start_ms) / 1000.0;
+            }
+            stack_push(t, value_num(sec));
+            return 1;
+        }
+
+        case OP_PUSH_DIST_MOUSE: {
+            double dist = 0.0;
+            if (spr && s) {
+                double dx = spr->x - s->mouse_x;
+                double dy = spr->y - s->mouse_y;
+                dist = std::sqrt(dx*dx + dy*dy);
+            }
+            stack_push(t, value_num(dist));
+            return 1;
+        }
+
         case OP_END:
             t->active = 0;
             return 1;
@@ -476,7 +578,7 @@ int scheduler_step_one(Scheduler* s, Project* p, VarStore* vars,
         Thread* t = &s->threads[idx];
 
         uint64_t bid = 0;
-        int did = step_thread(t, p, vars, now_ms, &bid, budget);
+        int did = step_thread(s, idx, t, p, vars, now_ms, &bid, budget);
         if (did) {
             if (out_block_id) *out_block_id = bid;
             s->rr_index = (idx + 1) % 16;

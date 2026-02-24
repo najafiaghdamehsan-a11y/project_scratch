@@ -77,11 +77,20 @@ static BlockCategory type_category(BlockType t) {
         case BLK_MOVE_STEPS:
         case BLK_TURN_DEG:
         case BLK_GOTO_XY:
+        case BLK_CHANGE_X_BY:
+        case BLK_CHANGE_Y_BY:
+        case BLK_GOTO_RANDOM:
+        case BLK_BOUNCE_EDGE:
+        case BLK_CHANGE_X_BY_POP:
+        case BLK_CHANGE_Y_BY_POP:
+        case BLK_SET_X_POP:
+        case BLK_SET_Y_POP:
             return CAT_MOTION;
 
         case BLK_EVENT_GREEN_FLAG:
         case BLK_EVENT_KEY_SPACE:
         case BLK_EVENT_RECV_MSG1:
+        case BLK_BROADCAST_MSG1:
             return CAT_EVENTS;
 
         case BLK_WAIT_MS:
@@ -98,6 +107,34 @@ static BlockCategory type_category(BlockType t) {
         case BLK_ENDIF:
             return CAT_CONTROL;
 
+        case BLK_PUSH_NUM:
+        case BLK_RANDOM_RANGE:
+        case BLK_ADD:
+        case BLK_SUB:
+        case BLK_MUL:
+        case BLK_DIV:
+        case BLK_GT:
+        case BLK_LT:
+        case BLK_EQ:
+        case BLK_AND:
+        case BLK_OR:
+        case BLK_NOT:
+            return CAT_OPERATORS;
+
+        case BLK_VAR0_READ:
+        case BLK_VAR0_SET:
+        case BLK_VAR0_CHANGE:
+            return CAT_VARIABLES;
+
+        case BLK_SENSE_MOUSE_X:
+        case BLK_SENSE_MOUSE_Y:
+        case BLK_SENSE_MOUSE_DOWN:
+        case BLK_SENSE_TIMER:
+        case BLK_SENSE_DISTANCE_MOUSE:
+        case BLK_SENSE_ASK_WAIT:
+        case BLK_SENSE_ANSWER:
+            return CAT_SENSING;
+
         default:
             return CAT_MOTION;
     }
@@ -109,10 +146,45 @@ static const char* block_label(BlockType t, int a, int b) {
         case BLK_MOVE_STEPS: snprintf(buf, sizeof(buf), "move %d steps", a); break;
         case BLK_TURN_DEG:   snprintf(buf, sizeof(buf), "turn %d degrees", a); break;
         case BLK_GOTO_XY:    snprintf(buf, sizeof(buf), "go to x:%d y:%d", a, b); break;
+        case BLK_CHANGE_X_BY:snprintf(buf, sizeof(buf), "change x by %d", a); break;
+        case BLK_CHANGE_Y_BY:snprintf(buf, sizeof(buf), "change y by %d", a); break;
+        case BLK_GOTO_RANDOM:snprintf(buf, sizeof(buf), "go to random position"); break;
+        case BLK_BOUNCE_EDGE:snprintf(buf, sizeof(buf), "if on edge, bounce"); break;
+
+        case BLK_CHANGE_X_BY_POP:snprintf(buf, sizeof(buf), "change x by (pop)"); break;
+        case BLK_CHANGE_Y_BY_POP:snprintf(buf, sizeof(buf), "change y by (pop)"); break;
+        case BLK_SET_X_POP:      snprintf(buf, sizeof(buf), "set x to (pop)"); break;
+        case BLK_SET_Y_POP:      snprintf(buf, sizeof(buf), "set y to (pop)"); break;
+
+        case BLK_PUSH_NUM:       snprintf(buf, sizeof(buf), "push %d", a); break;
+        case BLK_RANDOM_RANGE:   snprintf(buf, sizeof(buf), "random %d to %d", a, b); break;
+        case BLK_ADD:            snprintf(buf, sizeof(buf), "+"); break;
+        case BLK_SUB:            snprintf(buf, sizeof(buf), "-"); break;
+        case BLK_MUL:            snprintf(buf, sizeof(buf), "*"); break;
+        case BLK_DIV:            snprintf(buf, sizeof(buf), "/"); break;
+        case BLK_GT:             snprintf(buf, sizeof(buf), ">"); break;
+        case BLK_LT:             snprintf(buf, sizeof(buf), "<"); break;
+        case BLK_EQ:             snprintf(buf, sizeof(buf), "="); break;
+        case BLK_AND:            snprintf(buf, sizeof(buf), "and"); break;
+        case BLK_OR:             snprintf(buf, sizeof(buf), "or"); break;
+        case BLK_NOT:            snprintf(buf, sizeof(buf), "not"); break;
+
+        case BLK_VAR0_READ:      snprintf(buf, sizeof(buf), "read var0 (push)"); break;
+        case BLK_VAR0_SET:       snprintf(buf, sizeof(buf), "set var0 to (pop)"); break;
+        case BLK_VAR0_CHANGE:    snprintf(buf, sizeof(buf), "change var0 by (pop)"); break;
 
         case BLK_EVENT_GREEN_FLAG: snprintf(buf, sizeof(buf), "when green flag clicked"); break;
         case BLK_EVENT_KEY_SPACE:  snprintf(buf, sizeof(buf), "when space key pressed"); break;
         case BLK_EVENT_RECV_MSG1:  snprintf(buf, sizeof(buf), "when I receive msg1"); break;
+        case BLK_BROADCAST_MSG1:   snprintf(buf, sizeof(buf), "broadcast msg1"); break;
+
+        case BLK_SENSE_MOUSE_X:        snprintf(buf, sizeof(buf), "mouse x (push)"); break;
+        case BLK_SENSE_MOUSE_Y:        snprintf(buf, sizeof(buf), "mouse y (push)"); break;
+        case BLK_SENSE_MOUSE_DOWN:     snprintf(buf, sizeof(buf), "mouse down? (push)"); break;
+        case BLK_SENSE_TIMER:          snprintf(buf, sizeof(buf), "timer (push)"); break;
+        case BLK_SENSE_DISTANCE_MOUSE: snprintf(buf, sizeof(buf), "distance to mouse (push)"); break;
+        case BLK_SENSE_ASK_WAIT:       snprintf(buf, sizeof(buf), "ask and wait (number)"); break;
+        case BLK_SENSE_ANSWER:         snprintf(buf, sizeof(buf), "answer (push)"); break;
 
         case BLK_WAIT_MS:          snprintf(buf, sizeof(buf), "wait %d ms", a); break;
         case BLK_REPEAT_BEGIN:     snprintf(buf, sizeof(buf), "repeat %d", a); break;
@@ -246,6 +318,14 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
             SDL_Rect m0{ be->palette_r.x + pad, be->palette_r.y + pad, be->palette_r.w - pad*2, bh };
             SDL_Rect m1{ m0.x, m0.y + bh + gap, m0.w, bh };
             SDL_Rect m2{ m0.x, m1.y + bh + gap, m0.w, bh };
+            SDL_Rect m3{ m0.x, m2.y + bh + gap, m0.w, bh };
+            SDL_Rect m4{ m0.x, m3.y + bh + gap, m0.w, bh };
+            SDL_Rect m5{ m0.x, m4.y + bh + gap, m0.w, bh };
+            SDL_Rect m6{ m0.x, m5.y + bh + gap, m0.w, bh };
+            SDL_Rect m7{ m0.x, m6.y + bh + gap, m0.w, bh };
+            SDL_Rect m8{ m0.x, m7.y + bh + gap, m0.w, bh };
+            SDL_Rect m9{ m0.x, m8.y + bh + gap, m0.w, bh };
+            SDL_Rect m10{ m0.x, m9.y + bh + gap, m0.w, bh };
 
             SDL_Rect e0{ be->palette_r.x + pad, be->palette_r.y + pad, be->palette_r.w - pad*2, bh };
 
@@ -262,14 +342,24 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
                 if (pt_in_rect(mx, my, m0)) { type = BLK_MOVE_STEPS; a = 10; }
                 else if (pt_in_rect(mx, my, m1)) { type = BLK_TURN_DEG; a = 15; }
                 else if (pt_in_rect(mx, my, m2)) { type = BLK_GOTO_XY; a = 0; b = 0; }
+                else if (pt_in_rect(mx, my, m3)) { type = BLK_CHANGE_X_BY; a = 10; }
+                else if (pt_in_rect(mx, my, m4)) { type = BLK_CHANGE_Y_BY; a = 10; }
+                else if (pt_in_rect(mx, my, m5)) { type = BLK_GOTO_RANDOM; }
+                else if (pt_in_rect(mx, my, m6)) { type = BLK_BOUNCE_EDGE; }
+                else if (pt_in_rect(mx, my, m7)) { type = BLK_CHANGE_X_BY_POP; }
+                else if (pt_in_rect(mx, my, m8)) { type = BLK_CHANGE_Y_BY_POP; }
+                else if (pt_in_rect(mx, my, m9)) { type = BLK_SET_X_POP; }
+                else if (pt_in_rect(mx, my, m10)) { type = BLK_SET_Y_POP; }
             } else if (be->cat == CAT_EVENTS) {
                 SDL_Rect e0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
                 SDL_Rect e1{ e0.x,                 e0.y + (bh+gap)*1,                     e0.w,                   bh };
                 SDL_Rect e2{ e0.x,                 e0.y + (bh+gap)*2,                     e0.w,                   bh };
+                SDL_Rect e3{ e0.x,                 e0.y + (bh+gap)*3,                     e0.w,                   bh };
 
                 if (pt_in_rect(mx, my, e0)) { type = BLK_EVENT_GREEN_FLAG; }
                 else if (pt_in_rect(mx, my, e1)) { type = BLK_EVENT_KEY_SPACE; }
                 else if (pt_in_rect(mx, my, e2)) { type = BLK_EVENT_RECV_MSG1; }
+                else if (pt_in_rect(mx, my, e3)) { type = BLK_BROADCAST_MSG1; }
             } else if (be->cat == CAT_CONTROL) {
                 if (pt_in_rect(mx, my, c0)) { type = BLK_WAIT_MS; a = 100; }
                 else if (pt_in_rect(mx, my, c1)) { type = BLK_REPEAT_BEGIN; a = 10; }
@@ -279,6 +369,56 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
                 else if (pt_in_rect(mx, my, c5)) { type = BLK_IF_X_GT; a = 0; }
                 else if (pt_in_rect(mx, my, c6)) { type = BLK_ELSE; }
                 else if (pt_in_rect(mx, my, c7)) { type = BLK_ENDIF; }
+            } else if (be->cat == CAT_OPERATORS) {
+                SDL_Rect o0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+                SDL_Rect o1{ o0.x,                 o0.y + (bh+gap)*1,                     o0.w,                   bh };
+                SDL_Rect o2{ o0.x,                 o0.y + (bh+gap)*2,                     o0.w,                   bh };
+                SDL_Rect o3{ o0.x,                 o0.y + (bh+gap)*3,                     o0.w,                   bh };
+                SDL_Rect o4{ o0.x,                 o0.y + (bh+gap)*4,                     o0.w,                   bh };
+                SDL_Rect o5{ o0.x,                 o0.y + (bh+gap)*5,                     o0.w,                   bh };
+                SDL_Rect o6{ o0.x,                 o0.y + (bh+gap)*6,                     o0.w,                   bh };
+                SDL_Rect o7{ o0.x,                 o0.y + (bh+gap)*7,                     o0.w,                   bh };
+                SDL_Rect o8{ o0.x,                 o0.y + (bh+gap)*8,                     o0.w,                   bh };
+                SDL_Rect o9{ o0.x,                 o0.y + (bh+gap)*9,                     o0.w,                   bh };
+                SDL_Rect o10{ o0.x,                o0.y + (bh+gap)*10,                    o0.w,                   bh };
+                SDL_Rect o11{ o0.x,                o0.y + (bh+gap)*11,                    o0.w,                   bh };
+
+                if (pt_in_rect(mx, my, o0)) { type = BLK_PUSH_NUM; a = 1; }
+                else if (pt_in_rect(mx, my, o1)) { type = BLK_RANDOM_RANGE; a = 1; b = 10; }
+                else if (pt_in_rect(mx, my, o2)) { type = BLK_ADD; }
+                else if (pt_in_rect(mx, my, o3)) { type = BLK_SUB; }
+                else if (pt_in_rect(mx, my, o4)) { type = BLK_MUL; }
+                else if (pt_in_rect(mx, my, o5)) { type = BLK_DIV; }
+                else if (pt_in_rect(mx, my, o6)) { type = BLK_GT; }
+                else if (pt_in_rect(mx, my, o7)) { type = BLK_LT; }
+                else if (pt_in_rect(mx, my, o8)) { type = BLK_EQ; }
+                else if (pt_in_rect(mx, my, o9)) { type = BLK_AND; }
+                else if (pt_in_rect(mx, my, o10)) { type = BLK_OR; }
+                else if (pt_in_rect(mx, my, o11)) { type = BLK_NOT; }
+            } else if (be->cat == CAT_VARIABLES) {
+                SDL_Rect v0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+                SDL_Rect v1{ v0.x,                 v0.y + (bh+gap)*1,                     v0.w,                   bh };
+                SDL_Rect v2{ v0.x,                 v0.y + (bh+gap)*2,                     v0.w,                   bh };
+
+                if (pt_in_rect(mx, my, v0)) { type = BLK_VAR0_READ; }
+                else if (pt_in_rect(mx, my, v1)) { type = BLK_VAR0_SET; }
+                else if (pt_in_rect(mx, my, v2)) { type = BLK_VAR0_CHANGE; }
+            } else if (be->cat == CAT_SENSING) {
+                SDL_Rect s0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+                SDL_Rect s1{ s0.x,                 s0.y + (bh+gap)*1,                     s0.w,                   bh };
+                SDL_Rect s2{ s0.x,                 s0.y + (bh+gap)*2,                     s0.w,                   bh };
+                SDL_Rect s3{ s0.x,                 s0.y + (bh+gap)*3,                     s0.w,                   bh };
+                SDL_Rect s4{ s0.x,                 s0.y + (bh+gap)*4,                     s0.w,                   bh };
+                SDL_Rect s5{ s0.x,                 s0.y + (bh+gap)*5,                     s0.w,                   bh };
+                SDL_Rect s6{ s0.x,                 s0.y + (bh+gap)*6,                     s0.w,                   bh };
+
+                if (pt_in_rect(mx, my, s0)) { type = BLK_SENSE_MOUSE_X; }
+                else if (pt_in_rect(mx, my, s1)) { type = BLK_SENSE_MOUSE_Y; }
+                else if (pt_in_rect(mx, my, s2)) { type = BLK_SENSE_MOUSE_DOWN; }
+                else if (pt_in_rect(mx, my, s3)) { type = BLK_SENSE_TIMER; }
+                else if (pt_in_rect(mx, my, s4)) { type = BLK_SENSE_DISTANCE_MOUSE; }
+                else if (pt_in_rect(mx, my, s5)) { type = BLK_SENSE_ASK_WAIT; }
+                else if (pt_in_rect(mx, my, s6)) { type = BLK_SENSE_ANSWER; }
             }
 
             if (type != BLK_COUNT && be->block_count < MAX_WORKSPACE_BLOCKS) {
@@ -395,14 +535,38 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font, uin
         SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad, be->palette_r.w - pad*2, bh };
         SDL_Rect b1{ b0.x, b0.y + bh + gap, b0.w, bh };
         SDL_Rect b2{ b0.x, b1.y + bh + gap, b0.w, bh };
+        SDL_Rect b3{ b0.x, b2.y + bh + gap, b0.w, bh };
+        SDL_Rect b4{ b0.x, b3.y + bh + gap, b0.w, bh };
+        SDL_Rect b5{ b0.x, b4.y + bh + gap, b0.w, bh };
+        SDL_Rect b6{ b0.x, b5.y + bh + gap, b0.w, bh };
+        SDL_Rect b7{ b0.x, b6.y + bh + gap, b0.w, bh };
+        SDL_Rect b8{ b0.x, b7.y + bh + gap, b0.w, bh };
+        SDL_Rect b9{ b0.x, b8.y + bh + gap, b0.w, bh };
+        SDL_Rect b10{ b0.x, b9.y + bh + gap, b0.w, bh };
 
         fill_rect(ren, b0, base); draw_rect(ren, b0, border);
         fill_rect(ren, b1, base); draw_rect(ren, b1, border);
         fill_rect(ren, b2, base); draw_rect(ren, b2, border);
+        fill_rect(ren, b3, base); draw_rect(ren, b3, border);
+        fill_rect(ren, b4, base); draw_rect(ren, b4, border);
+        fill_rect(ren, b5, base); draw_rect(ren, b5, border);
+        fill_rect(ren, b6, base); draw_rect(ren, b6, border);
+        fill_rect(ren, b7, base); draw_rect(ren, b7, border);
+        fill_rect(ren, b8, base); draw_rect(ren, b8, border);
+        fill_rect(ren, b9, base); draw_rect(ren, b9, border);
+        fill_rect(ren, b10, base); draw_rect(ren, b10, border);
 
         draw_text(ren, font, b0.x + 12, b0.y + 10, "move 10 steps", text);
         draw_text(ren, font, b1.x + 12, b1.y + 10, "turn 15 degrees", text);
         draw_text(ren, font, b2.x + 12, b2.y + 10, "go to x:0 y:0", text);
+        draw_text(ren, font, b3.x + 12, b3.y + 10, "change x by 10", text);
+        draw_text(ren, font, b4.x + 12, b4.y + 10, "change y by 10", text);
+        draw_text(ren, font, b5.x + 12, b5.y + 10, "go to random", text);
+        draw_text(ren, font, b6.x + 12, b6.y + 10, "if on edge, bounce", text);
+        draw_text(ren, font, b7.x + 12, b7.y + 10, "change x by (pop)", text);
+        draw_text(ren, font, b8.x + 12, b8.y + 10, "change y by (pop)", text);
+        draw_text(ren, font, b9.x + 12, b9.y + 10, "set x to (pop)", text);
+        draw_text(ren, font, b10.x + 12, b10.y + 10, "set y to (pop)", text);
     }
 
     // Events
@@ -412,14 +576,47 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font, uin
         SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
         SDL_Rect b1{ b0.x,                 b0.y + (bh+gap)*1,                     b0.w,                   bh };
         SDL_Rect b2{ b0.x,                 b0.y + (bh+gap)*2,                     b0.w,                   bh };
+        SDL_Rect b3{ b0.x,                 b0.y + (bh+gap)*3,                     b0.w,                   bh };
 
         fill_rect(ren, b0, base); draw_rect(ren, b0, ev_border);
         fill_rect(ren, b1, base); draw_rect(ren, b1, ev_border);
         fill_rect(ren, b2, base); draw_rect(ren, b2, ev_border);
+        fill_rect(ren, b3, base); draw_rect(ren, b3, ev_border);
 
         draw_text(ren, font, b0.x + 12, b0.y + 10, "when green flag clicked", SDL_Color{40,40,40,255});
         draw_text(ren, font, b1.x + 12, b1.y + 10, "when space key pressed",  SDL_Color{40,40,40,255});
         draw_text(ren, font, b2.x + 12, b2.y + 10, "when I receive msg1",     SDL_Color{40,40,40,255});
+        draw_text(ren, font, b3.x + 12, b3.y + 10, "broadcast msg1",          SDL_Color{40,40,40,255});
+    }
+
+    // Sensing
+    else if (be->cat == CAT_SENSING) {
+        SDL_Color se_border = SDL_Color{ 10, 110, 110, 255 };
+
+        SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+        SDL_Rect b1{ b0.x,                 b0.y + (bh+gap)*1,                     b0.w,                   bh };
+        SDL_Rect b2{ b0.x,                 b0.y + (bh+gap)*2,                     b0.w,                   bh };
+        SDL_Rect b3{ b0.x,                 b0.y + (bh+gap)*3,                     b0.w,                   bh };
+        SDL_Rect b4{ b0.x,                 b0.y + (bh+gap)*4,                     b0.w,                   bh };
+        SDL_Rect b5{ b0.x,                 b0.y + (bh+gap)*5,                     b0.w,                   bh };
+        SDL_Rect b6{ b0.x,                 b0.y + (bh+gap)*6,                     b0.w,                   bh };
+
+        fill_rect(ren, b0, base); draw_rect(ren, b0, se_border);
+        fill_rect(ren, b1, base); draw_rect(ren, b1, se_border);
+        fill_rect(ren, b2, base); draw_rect(ren, b2, se_border);
+        fill_rect(ren, b3, base); draw_rect(ren, b3, se_border);
+        fill_rect(ren, b4, base); draw_rect(ren, b4, se_border);
+        fill_rect(ren, b5, base); draw_rect(ren, b5, se_border);
+        fill_rect(ren, b6, base); draw_rect(ren, b6, se_border);
+
+        SDL_Color tcol{30,30,30,255};
+        draw_text(ren, font, b0.x + 12, b0.y + 10, "mouse x (push)", tcol);
+        draw_text(ren, font, b1.x + 12, b1.y + 10, "mouse y (push)", tcol);
+        draw_text(ren, font, b2.x + 12, b2.y + 10, "mouse down? (push)", tcol);
+        draw_text(ren, font, b3.x + 12, b3.y + 10, "timer (push)", tcol);
+        draw_text(ren, font, b4.x + 12, b4.y + 10, "distance to mouse (push)", tcol);
+        draw_text(ren, font, b5.x + 12, b5.y + 10, "ask and wait (number)", tcol);
+        draw_text(ren, font, b6.x + 12, b6.y + 10, "answer (push)", tcol);
     }
 
     // Control
@@ -452,6 +649,65 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font, uin
         draw_text(ren, font, b5.x + 12, b5.y + 10, "if x > 0", text);
         draw_text(ren, font, b6.x + 12, b6.y + 10, "else", text);
         draw_text(ren, font, b7.x + 12, b7.y + 10, "end", text);
+    }
+
+    // Operators
+    else if (be->cat == CAT_OPERATORS) {
+        SDL_Color op_border = SDL_Color{ 25, 100, 45, 255 };
+        SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+        SDL_Rect b1{ b0.x,                 b0.y + (bh+gap)*1,                     b0.w,                   bh };
+        SDL_Rect b2{ b0.x,                 b0.y + (bh+gap)*2,                     b0.w,                   bh };
+        SDL_Rect b3{ b0.x,                 b0.y + (bh+gap)*3,                     b0.w,                   bh };
+        SDL_Rect b4{ b0.x,                 b0.y + (bh+gap)*4,                     b0.w,                   bh };
+        SDL_Rect b5{ b0.x,                 b0.y + (bh+gap)*5,                     b0.w,                   bh };
+        SDL_Rect b6{ b0.x,                 b0.y + (bh+gap)*6,                     b0.w,                   bh };
+        SDL_Rect b7{ b0.x,                 b0.y + (bh+gap)*7,                     b0.w,                   bh };
+        SDL_Rect b8{ b0.x,                 b0.y + (bh+gap)*8,                     b0.w,                   bh };
+        SDL_Rect b9{ b0.x,                 b0.y + (bh+gap)*9,                     b0.w,                   bh };
+        SDL_Rect b10{ b0.x,                b0.y + (bh+gap)*10,                    b0.w,                   bh };
+        SDL_Rect b11{ b0.x,                b0.y + (bh+gap)*11,                    b0.w,                   bh };
+
+        fill_rect(ren, b0, base);  draw_rect(ren, b0, op_border);
+        fill_rect(ren, b1, base);  draw_rect(ren, b1, op_border);
+        fill_rect(ren, b2, base);  draw_rect(ren, b2, op_border);
+        fill_rect(ren, b3, base);  draw_rect(ren, b3, op_border);
+        fill_rect(ren, b4, base);  draw_rect(ren, b4, op_border);
+        fill_rect(ren, b5, base);  draw_rect(ren, b5, op_border);
+        fill_rect(ren, b6, base);  draw_rect(ren, b6, op_border);
+        fill_rect(ren, b7, base);  draw_rect(ren, b7, op_border);
+        fill_rect(ren, b8, base);  draw_rect(ren, b8, op_border);
+        fill_rect(ren, b9, base);  draw_rect(ren, b9, op_border);
+        fill_rect(ren, b10, base); draw_rect(ren, b10, op_border);
+        fill_rect(ren, b11, base); draw_rect(ren, b11, op_border);
+
+        draw_text(ren, font, b0.x + 12, b0.y + 10,  "push 1", text);
+        draw_text(ren, font, b1.x + 12, b1.y + 10,  "random 1 to 10", text);
+        draw_text(ren, font, b2.x + 12, b2.y + 10,  "+", text);
+        draw_text(ren, font, b3.x + 12, b3.y + 10,  "-", text);
+        draw_text(ren, font, b4.x + 12, b4.y + 10,  "*", text);
+        draw_text(ren, font, b5.x + 12, b5.y + 10,  "/", text);
+        draw_text(ren, font, b6.x + 12, b6.y + 10,  ">", text);
+        draw_text(ren, font, b7.x + 12, b7.y + 10,  "<", text);
+        draw_text(ren, font, b8.x + 12, b8.y + 10,  "=", text);
+        draw_text(ren, font, b9.x + 12, b9.y + 10,  "and", text);
+        draw_text(ren, font, b10.x + 12, b10.y + 10, "or", text);
+        draw_text(ren, font, b11.x + 12, b11.y + 10, "not", text);
+    }
+
+    // Variables (var0)
+    else if (be->cat == CAT_VARIABLES) {
+        SDL_Color v_border = SDL_Color{ 140, 70, 20, 255 };
+        SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+        SDL_Rect b1{ b0.x,                 b0.y + (bh+gap)*1,                     b0.w,                   bh };
+        SDL_Rect b2{ b0.x,                 b0.y + (bh+gap)*2,                     b0.w,                   bh };
+
+        fill_rect(ren, b0, base); draw_rect(ren, b0, v_border);
+        fill_rect(ren, b1, base); draw_rect(ren, b1, v_border);
+        fill_rect(ren, b2, base); draw_rect(ren, b2, v_border);
+
+        draw_text(ren, font, b0.x + 12, b0.y + 10, "read var0 (push)", text);
+        draw_text(ren, font, b1.x + 12, b1.y + 10, "set var0 to (pop)", text);
+        draw_text(ren, font, b2.x + 12, b2.y + 10, "change var0 by (pop)", text);
     }
 }
 

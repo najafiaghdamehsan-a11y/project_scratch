@@ -63,6 +63,9 @@ void runtime_set_main_script(Runtime* r, const Instr* code, int len) {
 void runtime_green_flag(Runtime* r) {
     r->cycle = 0;
     r->paused = 0;
+    // UX: green flag should "just run" even if user previously enabled step mode.
+    // (They can re-enable step mode with 's' anytime.)
+    r->step_mode = 0;
     r->running = 1;
     r->stop_all = 0;
     r->do_step = 0;
@@ -76,6 +79,11 @@ void runtime_green_flag(Runtime* r) {
 
     // Scratch-like: reset variables each run
     varstore_clear(&r->vars);
+
+    // Reset timer + answer (sensing)
+    scheduler_set_timer_start(&r->sched, time_now_ms());
+    r->sched.answer_valid = 0;
+    r->sched.answer_value = 0.0;
 
     // IMPORTANT: run what UI compiled. If none, run nothing.
     scheduler_stop_all(&r->sched);
@@ -274,6 +282,12 @@ void runtime_tick(Runtime* r, Project* p) {
         executed_any = 1;
         r->current_block_id = bid;
         r->cycle++;
+    }
+
+    // If a running script requested a broadcast, schedule it for next tick.
+    if (r->sched.broadcast_pending) {
+        runtime_post_broadcast(r, r->sched.broadcast_id);
+        r->sched.broadcast_pending = 0;
     }
 
     // 4) watchdog exhausted

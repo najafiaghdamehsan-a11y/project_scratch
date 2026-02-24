@@ -27,10 +27,42 @@ extern "C" {
         BLK_EVENT_KEY_SPACE,
         BLK_EVENT_RECV_MSG1,
 
+        // Events (broadcast)
+        BLK_BROADCAST_MSG1,
+
         // Motion
         BLK_MOVE_STEPS,
         BLK_TURN_DEG,
         BLK_GOTO_XY,
+        BLK_CHANGE_X_BY,
+        BLK_CHANGE_Y_BY,
+        BLK_GOTO_RANDOM,
+        BLK_BOUNCE_EDGE,
+
+        // Motion (stack-input variants)
+        BLK_CHANGE_X_BY_POP,
+        BLK_CHANGE_Y_BY_POP,
+        BLK_SET_X_POP,
+        BLK_SET_Y_POP,
+
+        // Operators (stack-based)
+        BLK_PUSH_NUM,
+        BLK_RANDOM_RANGE,
+        BLK_ADD,
+        BLK_SUB,
+        BLK_MUL,
+        BLK_DIV,
+        BLK_GT,
+        BLK_LT,
+        BLK_EQ,
+        BLK_AND,
+        BLK_OR,
+        BLK_NOT,
+
+        // Variables (var0 only, stack-based)
+        BLK_VAR0_READ,
+        BLK_VAR0_SET,
+        BLK_VAR0_CHANGE,
 
         // Control
         BLK_WAIT_MS,
@@ -47,6 +79,15 @@ extern "C" {
         BLK_IF_RANDOM_LT,
         BLK_ELSE,
         BLK_ENDIF,
+
+        // Sensing (stack-based reporters + ask/answer)
+        BLK_SENSE_MOUSE_X,
+        BLK_SENSE_MOUSE_Y,
+        BLK_SENSE_MOUSE_DOWN,
+        BLK_SENSE_TIMER,
+        BLK_SENSE_DISTANCE_MOUSE,
+        BLK_SENSE_ASK_WAIT,
+        BLK_SENSE_ANSWER,
 
         BLK_COUNT
     } BlockType;
