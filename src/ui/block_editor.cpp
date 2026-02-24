@@ -350,7 +350,7 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
     }
 }
 
-void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font) {
+void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font, uint64_t highlight_id) {
     if (!be || !ren) return;
 
     fill_rect(ren, be->cat_r,     SDL_Color{ 245,245,245,255 });
@@ -465,6 +465,15 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font) {
 
         fill_rect(ren, bi->r, fill);
         draw_rect(ren, bi->r, border);
+
+        // draw highlight for currently executing block (runtime debugger)
+        if (highlight_id != 0 && bi->id == highlight_id) {
+            SDL_Rect h = bi->r;
+            h.x -= 4; h.y -= 4; h.w += 8; h.h += 8;
+            draw_rect(ren, h, SDL_Color{255, 215, 0, 255});   // gold-ish
+            h.x -= 1; h.y -= 1; h.w += 2; h.h += 2;
+            draw_rect(ren, h, SDL_Color{255, 215, 0, 255});
+        }
 
         const char* label = block_label(bi->type, bi->a, bi->b);
         draw_text(ren, font, bi->r.x + 12, bi->r.y + 9, label, txt);

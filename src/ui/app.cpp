@@ -609,7 +609,7 @@ int app_run(Project* project, Runtime* runtime) {
         draw_filled_rect(ren, topbar, 133, 94, 205, 255);
         draw_text(ren, font, 14, 14, "project_scratch      Code   Costumes   Sounds", SDL_Color{255,255,255,255});
 
-        block_editor_render(&be, ren, font);
+        block_editor_render(&be, ren, font, runtime_current_block(runtime));
 
         draw_rect(ren, rect_stage, 120, 120, 120, 255);
         draw_filled_rect(ren, rect_stage, 255, 255, 255, 255);

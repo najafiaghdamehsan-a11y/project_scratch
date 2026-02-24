@@ -89,8 +89,7 @@ extern "C" {
 
     void block_editor_handle_event(BlockEditor* be, const SDL_Event* e);
 
-    // render (draws category list + palette + workspace blocks + dotted grid)
-    void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font);
+    void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font, uint64_t highlight_id);
 
     int  block_editor_block_count(const BlockEditor* be);
     const BlockInstance* block_editor_blocks(const BlockEditor* be);
