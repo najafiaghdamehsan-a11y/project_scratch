@@ -192,6 +192,21 @@ static int be_find_top_greenflag_head(const BlockEditor* be) {
     return best;
 }
 
+static int be_find_top_hat_head(const BlockEditor* be, BlockType hat_type) {
+    int best = -1;
+    for (int i = 0; i < be->block_count; i++) {
+        if (be->blocks[i].type != hat_type) continue;
+        if (be_has_above(be, i)) continue; // must be a head
+
+        if (best == -1) { best = i; continue; }
+
+        SDL_Rect a = be->blocks[i].r;
+        SDL_Rect b = be->blocks[best].r;
+        if (a.y < b.y || (a.y == b.y && a.x < b.x)) best = i;
+    }
+    return best;
+}
+
 static int blk_is_if(BlockType t) {
     return t == BLK_IF_X_GT || t == BLK_IF_X_LT || t == BLK_IF_Y_GT || t == BLK_IF_Y_LT || t == BLK_IF_RANDOM_LT;
 }
@@ -207,24 +222,15 @@ static CondCode blk_to_cond(BlockType t) {
     }
 }
 
-static int compile_workspace_script(const BlockEditor* be, Instr* out, int cap) {
-    if (!be || be->block_count <= 0 || !out || cap <= 0) return 0;
+static int compile_workspace_script_from_start(const BlockEditor* be, int start_idx, Instr* out, int cap) {
+    if (!be || !out || cap <= 0) return 0;
+    if (start_idx < 0 || start_idx >= be->block_count) return 0;
 
-    // Prefer a green-flag head if present, otherwise compile the top-most head stack.
-    int start = -1;
-    int gf = be_find_top_greenflag_head(be);
-    if (gf != -1) start = be_find_below(be, gf);
-    else {
-        int head = be_find_top_head(be);
-        start = head;
-    }
-    if (start < 0) return 0;
-
-    // Collect linear order
+    // Collect linear order from start_idx following snap-below links
     int seq[MAX_WORKSPACE_BLOCKS];
     int seq_n = 0;
 
-    int idx = start;
+    int idx = start_idx;
     int guard = 0;
     while (idx >= 0 && idx < be->block_count && guard < MAX_WORKSPACE_BLOCKS) {
         seq[seq_n++] = idx;
@@ -234,7 +240,7 @@ static int compile_workspace_script(const BlockEditor* be, Instr* out, int cap) 
 
     int len = 0;
 
-    // Stacks for patching jumps (instruction indices!)
+    // Patch stacks
     int rep_stack[64]; int rep_top = 0;
     int for_stack[64]; int for_top = 0;
 
@@ -246,14 +252,13 @@ static int compile_workspace_script(const BlockEditor* be, Instr* out, int cap) 
         out[len++] = in;
         return 1;
     };
-
     auto after_current = [&]() -> int { return len; };
 
     for (int si = 0; si < seq_n; si++) {
         const BlockInstance* b = &be->blocks[seq[si]];
 
         switch (b->type) {
-            // ---------- Motion ----------
+            // ---- Motion ----
             case BLK_MOVE_STEPS:
                 if (!emit(Instr{ b->id, OP_MOVE_STEPS, (double)b->a, 0.0, 0, 0, COND_TRUE })) return len;
                 break;
@@ -268,12 +273,13 @@ static int compile_workspace_script(const BlockEditor* be, Instr* out, int cap) 
                 out[len++] = Instr{ b->id, OP_SET_Y, (double)b->b, 0.0, 0, 0, COND_TRUE };
                 break;
 
-            // ---------- Events ----------
+            // ---- Hats inside a script (ignore safely) ----
             case BLK_EVENT_GREEN_FLAG:
-                // Hat itself does not emit code (we start after it)
+            case BLK_EVENT_KEY_SPACE:
+            case BLK_EVENT_RECV_MSG1:
                 break;
 
-            // ---------- Control ----------
+            // ---- Control ----
             case BLK_WAIT_MS:
                 if (!emit(Instr{ b->id, OP_WAIT_MS, (double)b->a, 0.0, 0, 0, COND_TRUE })) return len;
                 break;
@@ -286,13 +292,10 @@ static int compile_workspace_script(const BlockEditor* be, Instr* out, int cap) 
             }
 
             case BLK_REPEAT_END: {
-                int end_ip = len;
                 if (!emit(Instr{ b->id, OP_REPEAT_END, 0.0, 0.0, 0, 0, COND_TRUE })) return len;
-
                 if (rep_top > 0) {
                     int beg_ip = rep_stack[--rep_top];
-                    // If repeat count <= 0, OP_REPEAT_BEGIN jumps to "after end"
-                    out[beg_ip].jump = after_current();
+                    out[beg_ip].jump = after_current(); // skip loop when count<=0
                 }
                 break;
             }
@@ -307,19 +310,19 @@ static int compile_workspace_script(const BlockEditor* be, Instr* out, int cap) 
             case BLK_FOREVER_END: {
                 int end_ip = len;
                 if (!emit(Instr{ b->id, OP_FOREVER_END, 0.0, 0.0, 0, 0, COND_TRUE })) return len;
-
                 int target = 0;
                 if (for_top > 0) target = for_stack[--for_top];
                 out[end_ip].jump = target;
                 break;
             }
 
-            // ---------- IF / ELSE / ENDIF ----------
+            // ---- IF / ELSE / ENDIF ----
             default:
                 if (blk_is_if(b->type)) {
                     CondCode cc = blk_to_cond(b->type);
                     double a = (double)b->a;
-                    if (cc == COND_RANDOM_LT) a = a / 100.0; // UI uses percent
+                    if (cc == COND_RANDOM_LT) a = a / 100.0;
+
                     int ip = len;
                     if (!emit(Instr{ b->id, OP_IF_BEGIN, a, 0.0, 0, 0, cc })) return len;
 
@@ -334,71 +337,82 @@ static int compile_workspace_script(const BlockEditor* be, Instr* out, int cap) 
                     if (!emit(Instr{ b->id, OP_ELSE, 0.0, 0.0, 0, 0, COND_TRUE })) return len;
 
                     if (if_top > 0) {
-                        // If false -> jump to else body start (ip + 1)
-                        IfItem& top = if_stack[if_top - 1];
-                        out[top.if_ip].jump = ip + 1;
+                        auto& top = if_stack[if_top - 1];
+                        out[top.if_ip].jump = ip + 1; // if-false -> else body
                         top.else_ip = ip;
                     }
                 }
                 else if (b->type == BLK_ENDIF) {
-                    int ip = len;
                     if (!emit(Instr{ b->id, OP_ENDIF, 0.0, 0.0, 0, 0, COND_TRUE })) return len;
 
                     if (if_top > 0) {
-                        IfItem top = if_stack[--if_top];
+                        auto top = if_stack[--if_top];
                         int after_endif = after_current();
-
-                        // If there was an else marker: else jumps over else-body to after endif
-                        if (top.else_ip != -1) {
-                            out[top.else_ip].jump = after_endif;
-                        } else {
-                            // No else: if-false jumps to after endif
-                            out[top.if_ip].jump = after_endif;
-                        }
+                        if (top.else_ip != -1) out[top.else_ip].jump = after_endif;
+                        else out[top.if_ip].jump = after_endif;
                     }
                 }
-                // Unknown block types: ignore for now
                 break;
         }
     }
 
-    // Patch any unclosed IFs to end
-    int end_target = len; // before OP_END
+    int end_target = len;
+
     while (if_top > 0) {
-        IfItem top = if_stack[--if_top];
+        auto top = if_stack[--if_top];
         out[top.if_ip].jump = end_target;
         if (top.else_ip != -1) out[top.else_ip].jump = end_target;
     }
-
-    // Patch any unclosed REPEAT_BEGIN to end (skip if count<=0)
     while (rep_top > 0) {
         int beg_ip = rep_stack[--rep_top];
         out[beg_ip].jump = end_target;
     }
 
-    // Finish with OP_END so thread terminates cleanly
     if (len < cap) out[len++] = Instr{ 0, OP_END, 0.0, 0.0, 0, 0, COND_TRUE };
-
     return len;
 }
 
 static void start_from_workspace(Runtime* runtime, const BlockEditor* be) {
-    Instr code[RUNTIME_MAX_MAIN_CODE];
-    int len = compile_workspace_script(be, code, RUNTIME_MAX_MAIN_CODE);
+    // clear old scripts
+    runtime_set_main_script(runtime, NULL, 0);
+    runtime_set_key_script(runtime, SDLK_SPACE, NULL, 0);
+    runtime_set_recv_script(runtime, 1, NULL, 0);
 
-    if (len <= 0) {
-        runtime_set_main_script(runtime, NULL, 0);
-        runtime_stop_all(runtime);
-        log_write(LogRecord{0,0,"UI","GreenFlag","no compilable script",LOG_INFO});
-        return;
+    // ---------- Green flag ----------
+    int gf_hat = be_find_top_hat_head(be, BLK_EVENT_GREEN_FLAG);
+    if (gf_hat != -1) {
+        int start = be_find_below(be, gf_hat);
+        if (start != -1) {
+            Instr code[RUNTIME_MAX_MAIN_CODE];
+            int len = compile_workspace_script_from_start(be, start, code, RUNTIME_MAX_MAIN_CODE);
+            if (len > 0) runtime_set_main_script(runtime, code, len);
+        }
     }
 
-    runtime_set_main_script(runtime, code, len);
-    runtime_green_flag(runtime);
+    // ---------- Space key ----------
+    int sp_hat = be_find_top_hat_head(be, BLK_EVENT_KEY_SPACE);
+    if (sp_hat != -1) {
+        int start = be_find_below(be, sp_hat);
+        if (start != -1) {
+            Instr code[RUNTIME_MAX_MAIN_CODE];
+            int len = compile_workspace_script_from_start(be, start, code, RUNTIME_MAX_MAIN_CODE);
+            if (len > 0) runtime_set_key_script(runtime, SDLK_SPACE, code, len);
+        }
+    }
 
-    char buf[64];
-    snprintf(buf, sizeof(buf), "compiled %d instr", len);
-    log_write(LogRecord{0,0,"UI","GreenFlag",buf,LOG_INFO});
+    // ---------- Receive msg1 ----------
+    int m1_hat = be_find_top_hat_head(be, BLK_EVENT_RECV_MSG1);
+    if (m1_hat != -1) {
+        int start = be_find_below(be, m1_hat);
+        if (start != -1) {
+            Instr code[RUNTIME_MAX_MAIN_CODE];
+            int len = compile_workspace_script_from_start(be, start, code, RUNTIME_MAX_MAIN_CODE);
+            if (len > 0) runtime_set_recv_script(runtime, 1, code, len);
+        }
+    }
+
+    // run main
+    runtime_green_flag(runtime);
 }
 
 // ============================================================
