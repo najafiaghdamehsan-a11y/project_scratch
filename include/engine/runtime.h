@@ -5,6 +5,9 @@
 #include <stdint.h>
 
 #define RUNTIME_MAX_MAIN_CODE 2048
+#define RUNTIME_MAX_EVENT_CODE 512
+#define RUNTIME_MAX_KEY_SCRIPTS 16
+#define RUNTIME_MAX_RECV_SCRIPTS 16
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,6 +39,23 @@ extern "C" {
         // UI-compiled “main stack” (copied here, because UI builds it on stack)
         Instr main_code[RUNTIME_MAX_MAIN_CODE];
         int   main_len;
+        typedef struct KeyScriptEntry {
+            int keycode;
+            Instr code[RUNTIME_MAX_EVENT_CODE];
+            int len;
+        } KeyScriptEntry;
+
+        typedef struct RecvScriptEntry {
+            int msg_id;
+            Instr code[RUNTIME_MAX_EVENT_CODE];
+            int len;
+        } RecvScriptEntry;
+
+        KeyScriptEntry key_scripts[RUNTIME_MAX_KEY_SCRIPTS];
+        int key_script_count;
+
+        RecvScriptEntry recv_scripts[RUNTIME_MAX_RECV_SCRIPTS];
+        int recv_script_count;
     } Runtime;
 
     void runtime_init(Runtime* r);
@@ -53,9 +73,12 @@ extern "C" {
 
     // called by UI when user presses green flag (compiled blocks)
     void runtime_set_main_script(Runtime* r, const Instr* code, int len);
+    void runtime_clear_event_scripts(Runtime* r);
+    void runtime_set_key_script(Runtime* r, int keycode, const Instr* code, int len);
+    void runtime_set_recv_script(Runtime* r, int msg_id,  const Instr* code, int len);
+
 
     void runtime_tick(Runtime* r, Project* p);
-
 #ifdef __cplusplus
 }
 #endif

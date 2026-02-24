@@ -36,6 +36,9 @@ void runtime_init(Runtime* r) {
     // variables
     varstore_init(&r->vars);
 
+    r->key_script_count = 0;
+    r->recv_script_count = 0;
+
     // main script buffer
     r->main_len = 0;
 }
@@ -91,6 +94,82 @@ void runtime_green_flag(Runtime* r) {
     }
 }
 
+void runtime_clear_event_scripts(Runtime* r) {
+    if (!r) return;
+    r->key_script_count = 0;
+    r->recv_script_count = 0;
+}
+
+static void copy_instr(Instr* dst, const Instr* src, int len) {
+    if (!dst || !src || len <= 0) return;
+    std::memcpy(dst, src, sizeof(Instr) * (size_t)len);
+}
+
+void runtime_set_key_script(Runtime* r, int keycode, const Instr* code, int len) {
+    if (!r) return;
+
+    if (!code || len <= 0) {
+        // remove if exists
+        for (int i = 0; i < r->key_script_count; i++) {
+            if (r->key_scripts[i].keycode == keycode) {
+                for (int j = i; j < r->key_script_count - 1; j++) r->key_scripts[j] = r->key_scripts[j+1];
+                r->key_script_count--;
+                return;
+            }
+        }
+        return;
+    }
+
+    if (len > RUNTIME_MAX_EVENT_CODE) len = RUNTIME_MAX_EVENT_CODE;
+
+    // replace if exists
+    for (int i = 0; i < r->key_script_count; i++) {
+        if (r->key_scripts[i].keycode == keycode) {
+            copy_instr(r->key_scripts[i].code, code, len);
+            r->key_scripts[i].len = len;
+            return;
+        }
+    }
+
+    // add new
+    if (r->key_script_count >= RUNTIME_MAX_KEY_SCRIPTS) return;
+    Runtime::KeyScriptEntry* e = &r->key_scripts[r->key_script_count++];
+    e->keycode = keycode;
+    copy_instr(e->code, code, len);
+    e->len = len;
+}
+
+void runtime_set_recv_script(Runtime* r, int msg_id, const Instr* code, int len) {
+    if (!r) return;
+
+    if (!code || len <= 0) {
+        for (int i = 0; i < r->recv_script_count; i++) {
+            if (r->recv_scripts[i].msg_id == msg_id) {
+                for (int j = i; j < r->recv_script_count - 1; j++) r->recv_scripts[j] = r->recv_scripts[j+1];
+                r->recv_script_count--;
+                return;
+            }
+        }
+        return;
+    }
+
+    if (len > RUNTIME_MAX_EVENT_CODE) len = RUNTIME_MAX_EVENT_CODE;
+
+    for (int i = 0; i < r->recv_script_count; i++) {
+        if (r->recv_scripts[i].msg_id == msg_id) {
+            copy_instr(r->recv_scripts[i].code, code, len);
+            r->recv_scripts[i].len = len;
+            return;
+        }
+    }
+
+    if (r->recv_script_count >= RUNTIME_MAX_RECV_SCRIPTS) return;
+    Runtime::RecvScriptEntry* e = &r->recv_scripts[r->recv_script_count++];
+    e->msg_id = msg_id;
+    copy_instr(e->code, code, len);
+    e->len = len;
+}
+
 void runtime_stop_all(Runtime* r) {
     r->stop_all = 1; // processed in tick (one-shot)
 }
@@ -125,9 +204,14 @@ void runtime_tick(Runtime* r, Project* p) {
         }
 
         // Start key scripts only while running (Scratch-like)
-        if (r->running) {
-            scheduler_start_on_key(&r->sched, k);
+        int started = 0;
+        for (int i = 0; i < r->key_script_count; i++) {
+            if (r->key_scripts[i].keycode == k && r->key_scripts[i].len > 0) {
+                scheduler_start_custom(&r->sched, r->key_scripts[i].code, r->key_scripts[i].len);
+                started = 1;
+            }
         }
+        if (started) r->running = 1;
 
         r->key_pending = 0;
     }
@@ -138,9 +222,14 @@ void runtime_tick(Runtime* r, Project* p) {
         std::snprintf(msgbuf, sizeof(msgbuf), "msg=%d", r->msg_id);
         log_write(LogRecord{r->cycle, 0, "EVENT", "Broadcast", msgbuf, LOG_INFO});
 
-        if (r->running) {
-            scheduler_broadcast(&r->sched, r->msg_id);
+        int started = 0;
+        for (int i = 0; i < r->recv_script_count; i++) {
+            if (r->recv_scripts[i].msg_id == r->msg_id && r->recv_scripts[i].len > 0) {
+                scheduler_start_custom(&r->sched, r->recv_scripts[i].code, r->recv_scripts[i].len);
+                started = 1;
+            }
         }
+        if (started) r->running = 1;
 
         r->msg_pending = 0;
     }

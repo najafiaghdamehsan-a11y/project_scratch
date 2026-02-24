@@ -24,6 +24,8 @@ extern "C" {
     typedef enum BlockType {
         // Events
         BLK_EVENT_GREEN_FLAG = 0,
+        BLK_EVENT_KEY_SPACE,
+        BLK_EVENT_RECV_MSG1,
 
         // Motion
         BLK_MOVE_STEPS,

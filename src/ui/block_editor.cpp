@@ -80,6 +80,8 @@ static BlockCategory type_category(BlockType t) {
             return CAT_MOTION;
 
         case BLK_EVENT_GREEN_FLAG:
+        case BLK_EVENT_KEY_SPACE:
+        case BLK_EVENT_RECV_MSG1:
             return CAT_EVENTS;
 
         case BLK_WAIT_MS:
@@ -109,6 +111,8 @@ static const char* block_label(BlockType t, int a, int b) {
         case BLK_GOTO_XY:    snprintf(buf, sizeof(buf), "go to x:%d y:%d", a, b); break;
 
         case BLK_EVENT_GREEN_FLAG: snprintf(buf, sizeof(buf), "when green flag clicked"); break;
+        case BLK_EVENT_KEY_SPACE:  snprintf(buf, sizeof(buf), "when space key pressed"); break;
+        case BLK_EVENT_RECV_MSG1:  snprintf(buf, sizeof(buf), "when I receive msg1"); break;
 
         case BLK_WAIT_MS:          snprintf(buf, sizeof(buf), "wait %d ms", a); break;
         case BLK_REPEAT_BEGIN:     snprintf(buf, sizeof(buf), "repeat %d", a); break;
@@ -259,7 +263,13 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
                 else if (pt_in_rect(mx, my, m1)) { type = BLK_TURN_DEG; a = 15; }
                 else if (pt_in_rect(mx, my, m2)) { type = BLK_GOTO_XY; a = 0; b = 0; }
             } else if (be->cat == CAT_EVENTS) {
+                SDL_Rect e0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+                SDL_Rect e1{ e0.x,                 e0.y + (bh+gap)*1,                     e0.w,                   bh };
+                SDL_Rect e2{ e0.x,                 e0.y + (bh+gap)*2,                     e0.w,                   bh };
+
                 if (pt_in_rect(mx, my, e0)) { type = BLK_EVENT_GREEN_FLAG; }
+                else if (pt_in_rect(mx, my, e1)) { type = BLK_EVENT_KEY_SPACE; }
+                else if (pt_in_rect(mx, my, e2)) { type = BLK_EVENT_RECV_MSG1; }
             } else if (be->cat == CAT_CONTROL) {
                 if (pt_in_rect(mx, my, c0)) { type = BLK_WAIT_MS; a = 100; }
                 else if (pt_in_rect(mx, my, c1)) { type = BLK_REPEAT_BEGIN; a = 10; }
@@ -399,10 +409,17 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font) {
     else if (be->cat == CAT_EVENTS) {
         SDL_Color ev_border = SDL_Color{ 160, 120, 20, 255 };
 
-        SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad, be->palette_r.w - pad*2, bh };
+        SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+        SDL_Rect b1{ b0.x,                 b0.y + (bh+gap)*1,                     b0.w,                   bh };
+        SDL_Rect b2{ b0.x,                 b0.y + (bh+gap)*2,                     b0.w,                   bh };
 
         fill_rect(ren, b0, base); draw_rect(ren, b0, ev_border);
+        fill_rect(ren, b1, base); draw_rect(ren, b1, ev_border);
+        fill_rect(ren, b2, base); draw_rect(ren, b2, ev_border);
+
         draw_text(ren, font, b0.x + 12, b0.y + 10, "when green flag clicked", SDL_Color{40,40,40,255});
+        draw_text(ren, font, b1.x + 12, b1.y + 10, "when space key pressed",  SDL_Color{40,40,40,255});
+        draw_text(ren, font, b2.x + 12, b2.y + 10, "when I receive msg1",     SDL_Color{40,40,40,255});
     }
 
     // Control
