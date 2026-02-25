@@ -106,6 +106,10 @@ extern "C" {
         SDL_Rect palette_r;
         SDL_Rect work_r;
 
+        // workspace scroll (vertical). blocks are stored in "world" coords,
+        // and rendered at (world_y - scroll_y).
+        int scroll_y; // pixels
+
         // state
         BlockCategory cat;
 

@@ -206,15 +206,45 @@ static const char* block_label(BlockType t, int a, int b) {
 }
 
 static void clamp_into(SDL_Rect* r, SDL_Rect area) {
+    // NOTE: blocks are stored in "world" coordinates. We clamp X to the visible
+    // workspace width, but we do NOT clamp the bottom Y so blocks can exist below
+    // the visible area for scrolling.
     if (r->x < area.x) r->x = area.x;
-    if (r->y < area.y) r->y = area.y;
     if (r->x + r->w > area.x + area.w) r->x = (area.x + area.w) - r->w;
-    if (r->y + r->h > area.y + area.h) r->y = (area.y + area.h) - r->h;
+
+    // Clamp only the top Y (world origin is at area.y)
+    if (r->y < area.y) r->y = area.y;
+}
+
+static int max_scroll_y(const BlockEditor* be) {
+    if (!be) return 0;
+    int max_bottom = be->work_r.y + be->work_r.h;
+    for (int i = 0; i < be->block_count; ++i) {
+        int btm = be->blocks[i].r.y + be->blocks[i].r.h + 60; // small margin
+        if (btm > max_bottom) max_bottom = btm;
+    }
+    int base_bottom = be->work_r.y + be->work_r.h;
+    int ms = max_bottom - base_bottom;
+    if (ms < 0) ms = 0;
+    return ms;
+}
+
+static void clamp_scroll(BlockEditor* be) {
+    if (!be) return;
+    int ms = max_scroll_y(be);
+    if (be->scroll_y < 0) be->scroll_y = 0;
+    if (be->scroll_y > ms) be->scroll_y = ms;
+}
+
+static SDL_Rect world_to_screen_rect(const BlockEditor* be, SDL_Rect r) {
+    r.y -= (be ? be->scroll_y : 0);
+    return r;
 }
 
 static int hit_workspace_block(BlockEditor* be, int mx, int my) {
     for (int i = be->block_count - 1; i >= 0; --i) {
-        if (pt_in_rect(mx, my, be->blocks[i].r)) return i;
+        SDL_Rect sr = world_to_screen_rect(be, be->blocks[i].r);
+        if (pt_in_rect(mx, my, sr)) return i;
     }
     return -1;
 }
@@ -225,6 +255,7 @@ static void remove_block(BlockEditor* be, int idx) {
     be->block_count--;
     if (be->selected_index == idx) be->selected_index = -1;
     else if (be->selected_index > idx) be->selected_index--;
+    clamp_scroll(be);
 }
 
 static void snap_under(BlockEditor* be, int idx) {
@@ -267,6 +298,7 @@ void block_editor_init(BlockEditor* be) {
     be->block_count = 0;
     be->selected_index = -1;
     be->dragging = 0;
+    be->scroll_y = 0;
     be->next_id = 1;
 }
 
@@ -274,6 +306,7 @@ void block_editor_set_layout(BlockEditor* be, SDL_Rect cat_r, SDL_Rect palette_r
     be->cat_r = cat_r;
     be->palette_r = palette_r;
     be->work_r = work_r;
+    clamp_scroll(be);
 }
 
 int block_editor_block_count(const BlockEditor* be) { return be->block_count; }
@@ -290,6 +323,23 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
         return;
     }
 
+    // Mouse wheel scroll inside workspace
+    if (e->type == SDL_MOUSEWHEEL) {
+        if (be->dragging) return; // keep dragging predictable
+
+        int mx = 0, my = 0;
+        SDL_GetMouseState(&mx, &my);
+        if (!pt_in_rect(mx, my, be->work_r)) return;
+
+        int dy = e->wheel.y;
+        if (e->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) dy = -dy;
+
+        const int STEP = 70; // pixels per wheel notch
+        be->scroll_y -= dy * STEP;
+        clamp_scroll(be);
+        return;
+    }
+
     int mx = 0, my = 0;
     if (e->type == SDL_MOUSEMOTION) {
         mx = e->motion.x; my = e->motion.y;
@@ -298,6 +348,9 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
     } else {
         return;
     }
+
+    // Convert mouse Y to world-space when interacting with workspace blocks
+    const int world_my = my + be->scroll_y;
 
     if (e->type == SDL_MOUSEBUTTONDOWN && e->button.button == SDL_BUTTON_LEFT) {
         if (pt_in_rect(mx, my, be->cat_r)) {
@@ -429,7 +482,7 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
                 be->blocks[idx].type = type;
                 be->blocks[idx].a = a;
                 be->blocks[idx].b = b;
-                be->blocks[idx].r = SDL_Rect{ mx - 120, my - 20, 240, 40 };
+                be->blocks[idx].r = SDL_Rect{ mx - 120, world_my - 20, 240, 40 };
                 // DON'T clamp here. Let it follow the mouse while dragging.
 
                 be->selected_index = idx;
@@ -439,7 +492,7 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
 
                 // now offsets are correct (will be 120 and 20)
                 be->drag_off_x = mx - be->blocks[idx].r.x;
-                be->drag_off_y = my - be->blocks[idx].r.y;
+                be->drag_off_y = world_my - be->blocks[idx].r.y;
                 return;
             }
         }
@@ -452,7 +505,7 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
                 be->drag_from_palette = 0;
                 be->drag_index = hit;
                 be->drag_off_x = mx - be->blocks[hit].r.x;
-                be->drag_off_y = my - be->blocks[hit].r.y;
+                be->drag_off_y = world_my - be->blocks[hit].r.y;
             } else {
                 be->selected_index = -1;
             }
@@ -467,7 +520,7 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
         int idx = be->drag_index;
         if (idx >= 0 && idx < be->block_count) {
             be->blocks[idx].r.x = mx - be->drag_off_x;
-            be->blocks[idx].r.y = my - be->drag_off_y;
+            be->blocks[idx].r.y = world_my - be->drag_off_y;
         }
         return;
     }
@@ -489,6 +542,9 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
         clamp_into(&be->blocks[idx].r, be->work_r);
         snap_under(be, idx);
 
+        // content height may have changed
+        clamp_scroll(be);
+
         be->drag_from_palette = 0;
         return;
     }
@@ -501,12 +557,17 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font, uin
     fill_rect(ren, be->palette_r, SDL_Color{ 250,250,250,255 });
     fill_rect(ren, be->work_r,    SDL_Color{ 252,252,252,255 });
 
+    // Workspace grid (scrolls with content)
+    SDL_RenderSetClipRect(ren, &be->work_r);
     SDL_SetRenderDrawColor(ren, 230, 230, 230, 255);
-    for (int y = be->work_r.y + 10; y < be->work_r.y + be->work_r.h; y += 22) {
-        for (int x = be->work_r.x + 10; x < be->work_r.x + be->work_r.w; x += 22) {
+    const int spacing = 22;
+    int y_start = be->work_r.y + 10 - (be->scroll_y % spacing);
+    for (int y = y_start; y < be->work_r.y + be->work_r.h; y += spacing) {
+        for (int x = be->work_r.x + 10; x < be->work_r.x + be->work_r.w; x += spacing) {
             SDL_RenderDrawPoint(ren, x, y);
         }
     }
+    SDL_RenderSetClipRect(ren, NULL);
 
     draw_rect(ren, be->cat_r, SDL_Color{210,210,210,255});
     draw_rect(ren, be->palette_r, SDL_Color{210,210,210,255});
@@ -723,20 +784,26 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font, uin
     }
 }
 
+    // Workspace blocks (clip to visible workspace and apply scroll)
+    SDL_RenderSetClipRect(ren, &be->work_r);
     for (int i = 0; i < be->block_count; ++i) {
         BlockInstance* bi = &be->blocks[i];
+        SDL_Rect sr = world_to_screen_rect(be, bi->r);
+
+        // quick reject (still clipped, but saves some work)
+        if (sr.y + sr.h < be->work_r.y || sr.y > be->work_r.y + be->work_r.h) continue;
 
         BlockCategory c = type_category(bi->type);
         SDL_Color fill = cat_color(c);
         SDL_Color border = border_from_fill(fill);
         SDL_Color txt = text_for_fill(fill);
 
-        fill_rect(ren, bi->r, fill);
-        draw_rect(ren, bi->r, border);
+        fill_rect(ren, sr, fill);
+        draw_rect(ren, sr, border);
 
         // draw highlight for currently executing block (runtime debugger)
         if (highlight_id != 0 && bi->id == highlight_id) {
-            SDL_Rect h = bi->r;
+            SDL_Rect h = sr;
             h.x -= 4; h.y -= 4; h.w += 8; h.h += 8;
             draw_rect(ren, h, SDL_Color{255, 215, 0, 255});   // gold-ish
             h.x -= 1; h.y -= 1; h.w += 2; h.h += 2;
@@ -744,12 +811,13 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font, uin
         }
 
         const char* label = block_label(bi->type, bi->a, bi->b);
-        draw_text(ren, font, bi->r.x + 12, bi->r.y + 9, label, txt);
+        draw_text(ren, font, sr.x + 12, sr.y + 9, label, txt);
 
         if (be->selected_index == i) {
-            SDL_Rect sel = bi->r;
+            SDL_Rect sel = sr;
             sel.x -= 2; sel.y -= 2; sel.w += 4; sel.h += 4;
             draw_rect(ren, sel, SDL_Color{ 170, 90, 255, 255 });
         }
     }
+    SDL_RenderSetClipRect(ren, NULL);
 }
