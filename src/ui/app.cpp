@@ -1,6 +1,6 @@
 #include "ui/app.h"
 #include "ui/block_editor.h"
-#include "io/serializer.h"
+#include "io/app_state_io.h"
 #include "core/log.h"
 
 #include <SDL.h>
@@ -824,14 +824,20 @@ int app_run(Project* project, Runtime* runtime) {
 
                 // File shortcuts (Ctrl+S save, Ctrl+O load, Ctrl+N new)
                 if (ctrl && k == SDLK_s) {
-                    int ok = save_project(project, save_path);
-                    toast = ok ? "Saved (sprites only for now)" : "Save failed";
+                    char err[256] = {0};
+                    be.selected_var_id = selected_var_id;
+                    int ok = app_state_save_v1(project, &be, &runtime->vars, save_path, err, (int)sizeof(err));
+                    toast = ok ? "Saved (full state)" : (std::string("Save failed: ") + (err[0] ? err : "unknown"));
                     toast_until = SDL_GetTicks() + 2000;
                     continue;
                 }
                 if (ctrl && k == SDLK_o) {
-                    int ok = load_project(project, save_path);
-                    toast = ok ? "Loaded (sprites only for now)" : "Load failed";
+                    char err[256] = {0};
+                    runtime_stop_all(runtime);
+                    runtime_clear_event_scripts(runtime);
+                    int ok = app_state_load_v1(project, &be, &runtime->vars, save_path, err, (int)sizeof(err));
+                    selected_var_id = be.selected_var_id;
+                    toast = ok ? "Loaded (full state)" : (std::string("Load failed: ") + (err[0] ? err : "unknown"));
                     toast_until = SDL_GetTicks() + 2000;
                     continue;
                 }

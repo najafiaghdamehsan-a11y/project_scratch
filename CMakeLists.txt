@@ -17,6 +17,7 @@ add_executable(project_scratch
 		src/model/project_io.cpp
 
 		src/io/serializer.cpp
+		src/io/app_state_io.cpp
 
 		src/engine/runtime.cpp
 		src/engine/safety.cpp
