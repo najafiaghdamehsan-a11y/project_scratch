@@ -169,9 +169,9 @@ static const char* block_label(BlockType t, int a, int b) {
         case BLK_OR:             snprintf(buf, sizeof(buf), "or"); break;
         case BLK_NOT:            snprintf(buf, sizeof(buf), "not"); break;
 
-        case BLK_VAR0_READ:      snprintf(buf, sizeof(buf), "read var0 (push)"); break;
-        case BLK_VAR0_SET:       snprintf(buf, sizeof(buf), "set var0 to (pop)"); break;
-        case BLK_VAR0_CHANGE:    snprintf(buf, sizeof(buf), "change var0 by (pop)"); break;
+        case BLK_VAR0_READ:      snprintf(buf, sizeof(buf), "read var%d (push)", a); break;
+        case BLK_VAR0_SET:       snprintf(buf, sizeof(buf), "set var%d to (pop)", a); break;
+        case BLK_VAR0_CHANGE:    snprintf(buf, sizeof(buf), "change var%d by (pop)", a); break;
 
         case BLK_EVENT_GREEN_FLAG: snprintf(buf, sizeof(buf), "when green flag clicked"); break;
         case BLK_EVENT_KEY_SPACE:  snprintf(buf, sizeof(buf), "when space key pressed"); break;
@@ -263,6 +263,7 @@ static void snap_under(BlockEditor* be, int idx) {
 void block_editor_init(BlockEditor* be) {
     memset(be, 0, sizeof(*be));
     be->cat = CAT_MOTION;
+    be->selected_var_id = 0;
     be->block_count = 0;
     be->selected_index = -1;
     be->dragging = 0;
@@ -396,6 +397,7 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
                 else if (pt_in_rect(mx, my, o10)) { type = BLK_OR; }
                 else if (pt_in_rect(mx, my, o11)) { type = BLK_NOT; }
             } else if (be->cat == CAT_VARIABLES) {
+                a = be->selected_var_id;
                 SDL_Rect v0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
                 SDL_Rect v1{ v0.x,                 v0.y + (bh+gap)*1,                     v0.w,                   bh };
                 SDL_Rect v2{ v0.x,                 v0.y + (bh+gap)*2,                     v0.w,                   bh };
@@ -705,9 +707,17 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font, uin
         fill_rect(ren, b1, base); draw_rect(ren, b1, v_border);
         fill_rect(ren, b2, base); draw_rect(ren, b2, v_border);
 
-        draw_text(ren, font, b0.x + 12, b0.y + 10, "read var0 (push)", text);
-        draw_text(ren, font, b1.x + 12, b1.y + 10, "set var0 to (pop)", text);
-        draw_text(ren, font, b2.x + 12, b2.y + 10, "change var0 by (pop)", text);
+        // This palette is contextual: it targets the currently-selected variable id.
+        // (Selection happens in app.cpp; default is 0.)
+        char buf[64];
+        snprintf(buf, sizeof(buf), "read var%d (push)", be->selected_var_id);
+        draw_text(ren, font, b0.x + 12, b0.y + 10, buf, text);
+
+        snprintf(buf, sizeof(buf), "set var%d to (pop)", be->selected_var_id);
+        draw_text(ren, font, b1.x + 12, b1.y + 10, buf, text);
+
+        snprintf(buf, sizeof(buf), "change var%d by (pop)", be->selected_var_id);
+        draw_text(ren, font, b2.x + 12, b2.y + 10, buf, text);
     }
 }
 

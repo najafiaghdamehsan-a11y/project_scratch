@@ -78,7 +78,7 @@ void runtime_green_flag(Runtime* r) {
     r->msg_id = 0;
 
     // Scratch-like: reset variables each run
-    varstore_clear(&r->vars);
+    varstore_reset_values(&r->vars);
 
     // Reset timer + answer (sensing)
     scheduler_set_timer_start(&r->sched, time_now_ms());

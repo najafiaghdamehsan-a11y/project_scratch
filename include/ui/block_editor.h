@@ -109,6 +109,9 @@ extern "C" {
         // state
         BlockCategory cat;
 
+        // Variables UX: which variable id new var blocks should target
+        int selected_var_id;
+
         // workspace blocks
         BlockInstance blocks[MAX_WORKSPACE_BLOCKS];
         int block_count;

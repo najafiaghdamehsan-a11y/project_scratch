@@ -1,5 +1,6 @@
 #include "ui/app.h"
 #include "ui/block_editor.h"
+#include "io/serializer.h"
 #include "core/log.h"
 
 #include <SDL.h>
@@ -354,15 +355,15 @@ static int compile_workspace_script_from_start(const BlockEditor* be, int start_
             case BLK_VAR0_READ:
                 if (!emit(Instr{ b->id, OP_READ_VAR_PUSH, 0.0,0.0, 0, 0, COND_TRUE })) return len;
                 // reuse `count` field as var id
-                out[len-1].count = 0;
+                out[len-1].count = b->a;
                 break;
             case BLK_VAR0_SET:
                 if (!emit(Instr{ b->id, OP_SET_VAR_POP, 0.0,0.0, 0, 0, COND_TRUE })) return len;
-                out[len-1].count = 0;
+                out[len-1].count = b->a;
                 break;
             case BLK_VAR0_CHANGE:
                 if (!emit(Instr{ b->id, OP_CHANGE_VAR_POP, 0.0,0.0, 0, 0, COND_TRUE })) return len;
-                out[len-1].count = 0;
+                out[len-1].count = b->a;
                 break;
 
             // ---------------------- Sensing (stack-based) ----------------------
@@ -601,6 +602,18 @@ int app_run(Project* project, Runtime* runtime) {
     int ask_active = 0;
     std::string ask_text;
 
+    // Variables UI state
+    int var_active = 0;
+    std::string var_text;
+    int selected_var_id = 0;
+
+    // Toast (small status text)
+    std::string toast;
+    uint32_t toast_until = 0;
+
+    char save_path[512];
+    snprintf(save_path, sizeof(save_path), "%s/save_project.txt", PROJECT_ROOT);
+
     // Stage sprite dragging
     int dragging_sprite = 0;
     int drag_sprite_idx = -1;
@@ -624,6 +637,7 @@ int app_run(Project* project, Runtime* runtime) {
         if (rect_workspace.w < 50) rect_workspace.w = 50;
 
         block_editor_set_layout(&be, rect_cat, rect_palette, rect_workspace);
+        be.selected_var_id = selected_var_id;
 
         SDL_Rect rect_right = {left_w, TOP, W - left_w, H - TOP};
         if (rect_right.w < min_right) rect_right.w = min_right;
@@ -667,7 +681,7 @@ int app_run(Project* project, Runtime* runtime) {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
 
-            block_editor_handle_event(&be, &e);
+            if (!ask_active && !var_active) block_editor_handle_event(&be, &e);
 
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) {
                 running = 0;
@@ -757,6 +771,34 @@ int app_run(Project* project, Runtime* runtime) {
 
             if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode k = e.key.keysym.sym;
+                SDL_Keymod mod = SDL_GetModState();
+                int ctrl = (mod & KMOD_CTRL) != 0;
+
+                // Variable modal input (name)
+                if (var_active) {
+                    if ((k == SDLK_BACKSPACE || k == SDLK_DELETE) && !var_text.empty()) {
+                        var_text.pop_back();
+                    }
+                    if (k == SDLK_ESCAPE) {
+                        var_active = 0;
+                        var_text.clear();
+                        SDL_StopTextInput();
+                    }
+                    if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+                        int id = varstore_create(&runtime->vars, var_text.c_str());
+                        if (id >= 0) {
+                            selected_var_id = id;
+                            toast = std::string("Variable ready: ") + varstore_name(&runtime->vars, id);
+                        } else {
+                            toast = "Variable create failed";
+                        }
+                        toast_until = SDL_GetTicks() + 2000;
+                        var_active = 0;
+                        var_text.clear();
+                        SDL_StopTextInput();
+                    }
+                    continue;
+                }
 
                 // Ask modal input (numeric)
                 if (ask_active) {
@@ -778,6 +820,48 @@ int app_run(Project* project, Runtime* runtime) {
                         SDL_StopTextInput();
                     }
                     continue;
+                }
+
+                // File shortcuts (Ctrl+S save, Ctrl+O load, Ctrl+N new)
+                if (ctrl && k == SDLK_s) {
+                    int ok = save_project(project, save_path);
+                    toast = ok ? "Saved (sprites only for now)" : "Save failed";
+                    toast_until = SDL_GetTicks() + 2000;
+                    continue;
+                }
+                if (ctrl && k == SDLK_o) {
+                    int ok = load_project(project, save_path);
+                    toast = ok ? "Loaded (sprites only for now)" : "Load failed";
+                    toast_until = SDL_GetTicks() + 2000;
+                    continue;
+                }
+                if (ctrl && k == SDLK_n) {
+                    model_init(project);
+                    block_editor_init(&be);
+                    runtime_stop_all(runtime);
+                    varstore_clear_all(&runtime->vars);
+                    selected_var_id = 0;
+                    toast = "New project";
+                    toast_until = SDL_GetTicks() + 2000;
+                    continue;
+                }
+
+                // Variables: press V to create variable by name
+                if (!ctrl && k == SDLK_v) {
+                    var_active = 1;
+                    var_text.clear();
+                    SDL_StartTextInput();
+                    continue;
+                }
+
+                // Variables: press 0-9 to select var id (if exists)
+                if (!ctrl && k >= SDLK_0 && k <= SDLK_9) {
+                    int id = (int)(k - SDLK_0);
+                    if (varstore_is_used(&runtime->vars, id)) {
+                        selected_var_id = id;
+                        toast = std::string("Selected ") + varstore_name(&runtime->vars, id);
+                        toast_until = SDL_GetTicks() + 1500;
+                    }
                 }
 
                 // Feed key events to runtime (for key-event scripts)
@@ -816,6 +900,10 @@ int app_run(Project* project, Runtime* runtime) {
                 if (ask_active) {
                     // Keep it simple: allow up to 32 chars.
                     if (ask_text.size() < 32) ask_text += e.text.text;
+                }
+                if (var_active) {
+                    // Variable names: max VAR_NAME_MAX-1 chars
+                    if (var_text.size() < (VAR_NAME_MAX - 1)) var_text += e.text.text;
                 }
             }
         }
@@ -860,6 +948,9 @@ int app_run(Project* project, Runtime* runtime) {
             else snprintf(buf, sizeof(buf), "%s", run);
 
             draw_text(ren, font, W - 160, 14, buf, SDL_Color{255,255,255,255});
+            if (!toast.empty() && SDL_GetTicks() < toast_until) {
+                draw_text(ren, font, 260, 14, toast.c_str(), SDL_Color{255,255,255,255});
+            }
         }
 
         block_editor_render(&be, ren, font, runtime_current_block(runtime));
@@ -872,13 +963,32 @@ int app_run(Project* project, Runtime* runtime) {
         draw_line(ren, rect_stage.x, sy0, rect_stage.x + rect_stage.w, sy0, 220,220,220,255);
         draw_line(ren, sx0, rect_stage.y, sx0, rect_stage.y + rect_stage.h, 220,220,220,255);
 
-        // variable monitor (var0)
+        // variable monitor
         {
-            Value v = varstore_get(&runtime->vars, 0);
-            char buf[64];
-            if (v.type == VAL_BOOL) snprintf(buf, sizeof(buf), "var0: %s", v.boolean ? "true" : "false");
-            else snprintf(buf, sizeof(buf), "var0: %.2f", v.num);
-            draw_text(ren, font, rect_stage.x + 8, rect_stage.y + 8, buf, SDL_Color{40,40,40,255});
+            int yy = rect_stage.y + 8;
+            draw_text(ren, font, rect_stage.x + 8, yy, "Variables (V=create, 0-9=select)", SDL_Color{40,40,40,255});
+            yy += 22;
+
+            for (int id = 0; id < VAR_MAX; id++) {
+                if (!varstore_is_used(&runtime->vars, id)) continue;
+
+                Value v = varstore_get(&runtime->vars, id);
+                const char* nm = varstore_name(&runtime->vars, id);
+                if (!nm || !nm[0]) nm = "var";
+
+                char buf[128];
+                if (v.type == VAL_BOOL) snprintf(buf, sizeof(buf), "%d:%s = %s", id, nm, v.boolean ? "true" : "false");
+                else snprintf(buf, sizeof(buf), "%d:%s = %.2f", id, nm, v.num);
+
+                if (id == selected_var_id) {
+                    SDL_Rect hi{ rect_stage.x + 6, yy - 2, rect_stage.w - 12, 20 };
+                    draw_filled_rect(ren, hi, 255, 245, 210, 255);
+                }
+                draw_text(ren, font, rect_stage.x + 8, yy, buf, SDL_Color{40,40,40,255});
+
+                yy += 20;
+                if (yy > rect_stage.y + rect_stage.h - 28) break;
+            }
         }
 
         draw_circle_button(ren, gf_cx, gf_cy, gf_r, SDL_Color{70, 200, 70, 255}, SDL_Color{30, 120, 30, 255});
@@ -929,6 +1039,28 @@ int app_run(Project* project, Runtime* runtime) {
             draw_rect(ren, box, 40,40,40,255);
 
             std::string line = ask_text;
+            if (((SDL_GetTicks()/350) % 2) == 0) line += "_";
+            draw_text(ren, font, box.x + 10, box.y + 9, line.c_str(), SDL_Color{20,20,20,255});
+
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+        }
+
+
+        // Variable overlay (name)
+        if (var_active) {
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+
+            SDL_Rect ov{ rect_stage.x + 20, rect_stage.y + 60, rect_stage.w - 40, 120 };
+            draw_filled_rect(ren, ov, 0, 0, 0, 140);
+            draw_rect(ren, ov, 240, 240, 240, 255);
+
+            draw_text(ren, font, ov.x + 14, ov.y + 12, "Variable: type a name and press Enter", SDL_Color{255,255,255,255});
+
+            SDL_Rect box{ ov.x + 14, ov.y + 54, ov.w - 28, 44 };
+            draw_filled_rect(ren, box, 255,255,255,255);
+            draw_rect(ren, box, 40,40,40,255);
+
+            std::string line = var_text;
             if (((SDL_GetTicks()/350) % 2) == 0) line += "_";
             draw_text(ren, font, box.x + 10, box.y + 9, line.c_str(), SDL_Color{20,20,20,255});
 
