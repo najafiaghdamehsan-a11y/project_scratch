@@ -430,12 +430,14 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
                 be->blocks[idx].a = a;
                 be->blocks[idx].b = b;
                 be->blocks[idx].r = SDL_Rect{ mx - 120, my - 20, 240, 40 };
-                clamp_into(&be->blocks[idx].r, be->work_r);
+                // DON'T clamp here. Let it follow the mouse while dragging.
 
                 be->selected_index = idx;
                 be->dragging = 1;
                 be->drag_from_palette = 1;
                 be->drag_index = idx;
+
+                // now offsets are correct (will be 120 and 20)
                 be->drag_off_x = mx - be->blocks[idx].r.x;
                 be->drag_off_y = my - be->blocks[idx].r.y;
                 return;
