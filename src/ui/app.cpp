@@ -51,6 +51,48 @@ static void draw_text(SDL_Renderer* ren, TTF_Font* font, int x, int y, const cha
     SDL_DestroyTexture(t);
 }
 
+// --- NEW: toast drawing with background box (put this after draw_text) ---
+static void draw_toast_box(SDL_Renderer* ren, TTF_Font* font,
+                           int x, int y, int max_w,
+                           const char* text)
+{
+    if (!font || !text || !text[0]) return;
+
+    std::string s(text);
+
+    int tw = 0, th = 0;
+    auto measure = [&](const std::string& t) -> bool {
+        return TTF_SizeUTF8(font, t.c_str(), &tw, &th) == 0;
+    };
+
+    // Truncate to fit max width
+    if (max_w > 0) {
+        while (measure(s) && tw > max_w && s.size() > 4) {
+            s.pop_back();
+            if (s.size() > 3 && s.substr(s.size() - 3) != "...") {
+                s = s.substr(0, s.size() - 3) + "...";
+            }
+        }
+    } else {
+        measure(s);
+    }
+
+    const int pad_x = 10;
+    const int pad_y = 6;
+
+    SDL_Rect bg { x, y, tw + pad_x * 2, th + pad_y * 2 };
+
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+
+    // dark translucent background
+    draw_filled_rect(ren, bg, 0, 0, 0, 170);
+    // light border
+    draw_rect(ren, bg, 255, 255, 255, 120);
+
+    draw_text(ren, font, x + pad_x, y + pad_y, s.c_str(),
+              SDL_Color{255, 255, 255, 255});
+}
+
 // -------------------- stage title helpers --------------------
 static void update_window_title(SDL_Window* win, const Project* p) {
     const char* name = "None";
@@ -954,8 +996,23 @@ int app_run(Project* project, Runtime* runtime) {
             else snprintf(buf, sizeof(buf), "%s", run);
 
             draw_text(ren, font, W - 160, 14, buf, SDL_Color{255,255,255,255});
+            const char* tabs = "project_scratch      Code   Costumes   Sounds";
+            int tabs_x = 14;
+            int tabs_y = 14;
+
+            // draw the tabs (keep your existing draw_text line OR use this)
+            draw_text(ren, font, tabs_x, tabs_y, tabs, SDL_Color{255,255,255,255});
+
+            // calculate how wide the tabs text is
+            int tabs_w = 0, tabs_h = 0;
+            TTF_SizeUTF8(font, tabs, &tabs_w, &tabs_h);
+
             if (!toast.empty() && SDL_GetTicks() < toast_until) {
-                draw_text(ren, font, 260, 14, toast.c_str(), SDL_Color{255,255,255,255});
+                int tx = tabs_x + tabs_w + 12;  // 12px after "Sounds"
+                int ty = 14;                    // same row as tabs (inside top bar)
+
+                // simplest: draw toast text here
+                draw_text(ren, font, tx, ty, toast.c_str(), SDL_Color{255,255,255,255});
             }
         }
 
