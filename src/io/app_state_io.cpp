@@ -72,7 +72,9 @@ int app_state_save_v1(const Project* p,
         std::snprintf(namebuf, sizeof(namebuf), "%s", s->name[0] ? s->name : "Sprite");
         std::fprintf(
             f,
-            "SPRITE %d %" PRIu64 " \"%s\" %.6f %.6f %.6f %.6f %d\n",
+            // Backward-compatible: older loaders may ignore trailing fields.
+            // Fields after 'visible' store pen state.
+            "SPRITE %d %" PRIu64 " \"%s\" %.6f %.6f %.6f %.6f %d %d %d %d %d %d\n",
             i,
             (uint64_t)s->id,
             namebuf,
@@ -80,7 +82,12 @@ int app_state_save_v1(const Project* p,
             (double)s->y,
             (double)s->dir,
             (double)s->size,
-            (int)s->visible);
+            (int)s->visible,
+            (int)s->pen_down,
+            (int)s->pen_size,
+            (int)s->pen_r,
+            (int)s->pen_g,
+            (int)s->pen_b);
     }
 
     // ---- Variables ----
@@ -205,9 +212,13 @@ int app_state_load_v1(Project* p,
         char name[MAX_NAME] = {0};
         double x = 0, y = 0, dir = 90, size = 100;
         int visible = 1;
+        int pen_down = 0;
+        int pen_size = 4;
+        int pen_r = 0, pen_g = 0, pen_b = 0;
         int ok = std::sscanf(
             line,
-            "SPRITE %d %" SCNu64 " \"%63[^\"]\" %lf %lf %lf %lf %d",
+            // Backward-compatible parser: accepts older lines without visible/pen fields.
+            "SPRITE %d %" SCNu64 " \"%63[^\"]\" %lf %lf %lf %lf %d %d %d %d %d %d",
             &idx,
             &id,
             name,
@@ -215,7 +226,12 @@ int app_state_load_v1(Project* p,
             &y,
             &dir,
             &size,
-            &visible);
+            &visible,
+            &pen_down,
+            &pen_size,
+            &pen_r,
+            &pen_g,
+            &pen_b);
 
         if (ok < 7) {
             set_err(err, err_cap, "app_state_load_v1: bad SPRITE line");
@@ -232,6 +248,17 @@ int app_state_load_v1(Project* p,
         s->dir = dir;
         s->size = size;
         s->visible = (ok >= 8) ? visible : 1;
+
+        // Pen state (optional in file)
+        if (ok >= 10) {
+            s->pen_down = pen_down;
+            s->pen_size = pen_size;
+        }
+        if (ok >= 13) {
+            s->pen_r = (uint8_t)pen_r;
+            s->pen_g = (uint8_t)pen_g;
+            s->pen_b = (uint8_t)pen_b;
+        }
     }
     p->sprite_count = n;
     p->active_sprite_index = active;

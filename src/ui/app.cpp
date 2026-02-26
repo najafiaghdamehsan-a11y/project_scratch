@@ -39,6 +39,78 @@ static void mouse_to_stage(const SDL_Rect* rect_stage, int mx, int my, double* o
     *out_y = sy0 - (double)my;
 }
 
+// Convert stage-space coordinates (Scratch-like: x right, y up) to a pen canvas texture pixel.
+static void stage_to_tex(int tex_w, int tex_h, double sx, double sy, int* out_x, int* out_y) {
+    if (!out_x || !out_y) return;
+    int cx = tex_w / 2;
+    int cy = tex_h / 2;
+    *out_x = cx + (int)sx;
+    *out_y = cy - (int)sy;
+}
+
+static void pen_canvas_clear(SDL_Renderer* ren, SDL_Texture* pen_tex) {
+    if (!ren || !pen_tex) return;
+    SDL_SetRenderTarget(ren, pen_tex);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(ren, 0, 0, 0, 0);
+    SDL_RenderClear(ren);
+    SDL_SetRenderTarget(ren, NULL);
+}
+
+static void draw_thick_line(SDL_Renderer* ren, int x1, int y1, int x2, int y2, int size) {
+    if (!ren) return;
+    if (size < 1) size = 1;
+    int r = size / 2;
+
+    // Simple thickness approximation: draw multiple parallel lines.
+    for (int o = -r; o <= r; ++o) {
+        SDL_RenderDrawLine(ren, x1 + o, y1, x2 + o, y2);
+        SDL_RenderDrawLine(ren, x1, y1 + o, x2, y2 + o);
+    }
+}
+
+static void pen_consume_cmds(Project* project, SDL_Renderer* ren, SDL_Texture* pen_tex, int tex_w, int tex_h) {
+    if (!project || !ren || !pen_tex) return;
+    if (project->pen_cmd_count <= 0) return;
+
+    SDL_SetRenderTarget(ren, pen_tex);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+
+    for (int i = 0; i < project->pen_cmd_count; ++i) {
+        const PenCmd* c = &project->pen_cmds[i];
+        if (c->type == PEN_CMD_CLEAR) {
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(ren, 0, 0, 0, 0);
+            SDL_RenderClear(ren);
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        } else if (c->type == PEN_CMD_LINE) {
+            int x1, y1, x2, y2;
+            stage_to_tex(tex_w, tex_h, c->x1, c->y1, &x1, &y1);
+            stage_to_tex(tex_w, tex_h, c->x2, c->y2, &x2, &y2);
+            SDL_SetRenderDrawColor(ren, c->r, c->g, c->b, 255);
+            draw_thick_line(ren, x1, y1, x2, y2, c->size);
+        } else if (c->type == PEN_CMD_STAMP) {
+            // Stamp a simple sprite representation onto the canvas.
+            // c->x1,y1 = center in stage coords; c->x2,y2 = width/height in stage units.
+            int cx, cy;
+            stage_to_tex(tex_w, tex_h, c->x1, c->y1, &cx, &cy);
+            int w = (int)c->x2;
+            int h = (int)c->y2;
+            if (w < 2) w = 2;
+            if (h < 2) h = 2;
+
+            SDL_Rect rr{ cx - w/2, cy - h/2, w, h };
+            SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+            SDL_RenderFillRect(ren, &rr);
+            SDL_SetRenderDrawColor(ren, c->r, c->g, c->b, 255);
+            SDL_RenderDrawRect(ren, &rr);
+        }
+    }
+
+    project->pen_cmd_count = 0;
+    SDL_SetRenderTarget(ren, NULL);
+}
+
 static void draw_text(SDL_Renderer* ren, TTF_Font* font, int x, int y, const char* text, SDL_Color c) {
     if (!font || !text) return;
     SDL_Surface* s = TTF_RenderUTF8_Blended(font, text, c);
@@ -124,6 +196,13 @@ static void project_add_sprite(Project* p) {
     s->dir = 90;
     s->size = 100;
     s->visible = 1;
+
+    // Pen defaults
+    s->pen_down = 0;
+    s->pen_size = 4;
+    s->pen_r = 0;
+    s->pen_g = 0;
+    s->pen_b = 0;
 
     p->active_sprite_index = idx;
 }
@@ -431,6 +510,27 @@ static int compile_workspace_script_from_start(const BlockEditor* be, int start_
                 if (!emit(Instr{ b->id, OP_PUSH_ANSWER, 0.0,0.0, 0,0, COND_TRUE })) return len;
                 break;
 
+
+            // ---------------------- Pen (extension) ----------------------
+            case BLK_PEN_DOWN:
+                if (!emit(Instr{ b->id, OP_PEN_DOWN, 0.0,0.0, 0,0, COND_TRUE })) return len;
+                break;
+            case BLK_PEN_UP:
+                if (!emit(Instr{ b->id, OP_PEN_UP, 0.0,0.0, 0,0, COND_TRUE })) return len;
+                break;
+            case BLK_PEN_ERASE_ALL:
+                if (!emit(Instr{ b->id, OP_PEN_ERASE_ALL, 0.0,0.0, 0,0, COND_TRUE })) return len;
+                break;
+            case BLK_PEN_STAMP:
+                if (!emit(Instr{ b->id, OP_PEN_STAMP, 0.0,0.0, 0,0, COND_TRUE })) return len;
+                break;
+            case BLK_PEN_SET_COLOR_POP:
+                if (!emit(Instr{ b->id, OP_PEN_SET_COLOR_POP, 0.0,0.0, 0,0, COND_TRUE })) return len;
+                break;
+            case BLK_PEN_SET_SIZE_POP:
+                if (!emit(Instr{ b->id, OP_PEN_SET_SIZE_POP, 0.0,0.0, 0,0, COND_TRUE })) return len;
+                break;
+
             // Events (statement)
             case BLK_BROADCAST_MSG1:
                 if (!emit(Instr{ b->id, OP_BROADCAST, 0.0,0.0, 0, 1, COND_TRUE })) return len;
@@ -660,6 +760,11 @@ int app_run(Project* project, Runtime* runtime) {
     int dragging_sprite = 0;
     int drag_sprite_idx = -1;
 
+    // Pen canvas (persistent drawing layer)
+    SDL_Texture* pen_tex = nullptr;
+    int pen_tex_w = 0;
+    int pen_tex_h = 0;
+
     while (running) {
         int W, H;
         SDL_GetWindowSize(win, &W, &H);
@@ -709,6 +814,23 @@ int app_run(Project* project, Runtime* runtime) {
             rect_sprite_panel.w,
             rect_sprite_panel.h - (BTN_H + 10)
         };
+
+        // Ensure pen canvas matches current stage size (recreate on resize)
+        if (rect_stage.w != pen_tex_w || rect_stage.h != pen_tex_h) {
+            if (pen_tex) {
+                SDL_DestroyTexture(pen_tex);
+                pen_tex = nullptr;
+            }
+            pen_tex_w = rect_stage.w;
+            pen_tex_h = rect_stage.h;
+            if (pen_tex_w > 0 && pen_tex_h > 0) {
+                pen_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, pen_tex_w, pen_tex_h);
+                if (pen_tex) {
+                    SDL_SetTextureBlendMode(pen_tex, SDL_BLENDMODE_BLEND);
+                    pen_canvas_clear(ren, pen_tex);
+                }
+            }
+        }
 
         // Green flag + stop buttons
         int gf_r = 10;
@@ -881,6 +1003,10 @@ int app_run(Project* project, Runtime* runtime) {
                     selected_var_id = be.selected_var_id;
                     toast = ok ? "Loaded (full state)" : (std::string("Load failed: ") + (err[0] ? err : "unknown"));
                     toast_until = SDL_GetTicks() + 2000;
+
+                    // Clear pen canvas on load (pen strokes are not persisted yet)
+                    if (project) project->pen_cmd_count = 0;
+                    if (pen_tex) pen_canvas_clear(ren, pen_tex);
                     continue;
                 }
                 if (ctrl && k == SDLK_n) {
@@ -891,6 +1017,10 @@ int app_run(Project* project, Runtime* runtime) {
                     selected_var_id = 0;
                     toast = "New project";
                     toast_until = SDL_GetTicks() + 2000;
+
+                    // Clear pen canvas on new
+                    if (project) project->pen_cmd_count = 0;
+                    if (pen_tex) pen_canvas_clear(ren, pen_tex);
                     continue;
                 }
 
@@ -974,6 +1104,10 @@ int app_run(Project* project, Runtime* runtime) {
         }
 
         runtime_tick(runtime, project);
+        // Apply pen draw commands emitted by the runtime.
+        if (project && pen_tex) {
+            pen_consume_cmds(project, ren, pen_tex, pen_tex_w, pen_tex_h);
+        }
         update_window_title(win, project);
 
         SDL_SetRenderDrawColor(ren, 230, 230, 235, 255);
@@ -1020,6 +1154,11 @@ int app_run(Project* project, Runtime* runtime) {
 
         draw_rect(ren, rect_stage, 120, 120, 120, 255);
         draw_filled_rect(ren, rect_stage, 255, 255, 255, 255);
+
+        // Pen layer (persistent canvas)
+        if (pen_tex) {
+            SDL_RenderCopy(ren, pen_tex, NULL, &rect_stage);
+        }
 
         int sx0 = rect_stage.x + rect_stage.w/2;
         int sy0 = rect_stage.y + rect_stage.h/2;

@@ -38,6 +38,7 @@ static const char* cat_name(BlockCategory c) {
         case CAT_SENSING:   return "Sensing";
         case CAT_OPERATORS: return "Operators";
         case CAT_VARIABLES: return "Variables";
+        case CAT_PEN:       return "Pen";
         default: return "???";
     }
 }
@@ -52,6 +53,7 @@ static SDL_Color cat_color(BlockCategory c) {
         case CAT_SENSING:   return SDL_Color{  80, 210, 210, 255 };
         case CAT_OPERATORS: return SDL_Color{  60, 200,  90, 255 };
         case CAT_VARIABLES: return SDL_Color{ 255, 140,  60, 255 };
+        case CAT_PEN:       return SDL_Color{  20, 190, 190, 255 };
         default: return SDL_Color{ 200, 200, 200, 255 };
     }
 }
@@ -126,6 +128,14 @@ static BlockCategory type_category(BlockType t) {
         case BLK_VAR0_CHANGE:
             return CAT_VARIABLES;
 
+        case BLK_PEN_ERASE_ALL:
+        case BLK_PEN_STAMP:
+        case BLK_PEN_DOWN:
+        case BLK_PEN_UP:
+        case BLK_PEN_SET_COLOR_POP:
+        case BLK_PEN_SET_SIZE_POP:
+            return CAT_PEN;
+
         case BLK_SENSE_MOUSE_X:
         case BLK_SENSE_MOUSE_Y:
         case BLK_SENSE_MOUSE_DOWN:
@@ -172,6 +182,13 @@ static const char* block_label(BlockType t, int a, int b) {
         case BLK_VAR0_READ:      snprintf(buf, sizeof(buf), "read var%d (push)", a); break;
         case BLK_VAR0_SET:       snprintf(buf, sizeof(buf), "set var%d to (pop)", a); break;
         case BLK_VAR0_CHANGE:    snprintf(buf, sizeof(buf), "change var%d by (pop)", a); break;
+
+        case BLK_PEN_ERASE_ALL:       snprintf(buf, sizeof(buf), "erase all"); break;
+        case BLK_PEN_STAMP:           snprintf(buf, sizeof(buf), "stamp"); break;
+        case BLK_PEN_DOWN:            snprintf(buf, sizeof(buf), "pen down"); break;
+        case BLK_PEN_UP:              snprintf(buf, sizeof(buf), "pen up"); break;
+        case BLK_PEN_SET_COLOR_POP:   snprintf(buf, sizeof(buf), "set pen color to (pop)"); break;
+        case BLK_PEN_SET_SIZE_POP:    snprintf(buf, sizeof(buf), "set pen size to (pop)"); break;
 
         case BLK_EVENT_GREEN_FLAG: snprintf(buf, sizeof(buf), "when green flag clicked"); break;
         case BLK_EVENT_KEY_SPACE:  snprintf(buf, sizeof(buf), "when space key pressed"); break;
@@ -474,6 +491,20 @@ void block_editor_handle_event(BlockEditor* be, const SDL_Event* e) {
                 else if (pt_in_rect(mx, my, s4)) { type = BLK_SENSE_DISTANCE_MOUSE; }
                 else if (pt_in_rect(mx, my, s5)) { type = BLK_SENSE_ASK_WAIT; }
                 else if (pt_in_rect(mx, my, s6)) { type = BLK_SENSE_ANSWER; }
+            } else if (be->cat == CAT_PEN) {
+                SDL_Rect p0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+                SDL_Rect p1{ p0.x,                 p0.y + (bh+gap)*1,                     p0.w,                   bh };
+                SDL_Rect p2{ p0.x,                 p0.y + (bh+gap)*2,                     p0.w,                   bh };
+                SDL_Rect p3{ p0.x,                 p0.y + (bh+gap)*3,                     p0.w,                   bh };
+                SDL_Rect p4{ p0.x,                 p0.y + (bh+gap)*4,                     p0.w,                   bh };
+                SDL_Rect p5{ p0.x,                 p0.y + (bh+gap)*5,                     p0.w,                   bh };
+
+                if (pt_in_rect(mx, my, p0)) { type = BLK_PEN_ERASE_ALL; }
+                else if (pt_in_rect(mx, my, p1)) { type = BLK_PEN_STAMP; }
+                else if (pt_in_rect(mx, my, p2)) { type = BLK_PEN_DOWN; }
+                else if (pt_in_rect(mx, my, p3)) { type = BLK_PEN_UP; }
+                else if (pt_in_rect(mx, my, p4)) { type = BLK_PEN_SET_COLOR_POP; }
+                else if (pt_in_rect(mx, my, p5)) { type = BLK_PEN_SET_SIZE_POP; }
             }
 
             if (type != BLK_COUNT && be->block_count < MAX_WORKSPACE_BLOCKS) {
@@ -781,6 +812,33 @@ void block_editor_render(BlockEditor* be, SDL_Renderer* ren, TTF_Font* font, uin
 
         snprintf(buf, sizeof(buf), "change var%d by (pop)", be->selected_var_id);
         draw_text(ren, font, b2.x + 12, b2.y + 10, buf, text);
+    }
+
+    // Pen
+    else if (be->cat == CAT_PEN) {
+        SDL_Color p_border = SDL_Color{ 0, 110, 110, 255 };
+
+        SDL_Rect b0{ be->palette_r.x + pad, be->palette_r.y + pad,                be->palette_r.w - pad*2, bh };
+        SDL_Rect b1{ b0.x,                 b0.y + (bh+gap)*1,                     b0.w,                   bh };
+        SDL_Rect b2{ b0.x,                 b0.y + (bh+gap)*2,                     b0.w,                   bh };
+        SDL_Rect b3{ b0.x,                 b0.y + (bh+gap)*3,                     b0.w,                   bh };
+        SDL_Rect b4{ b0.x,                 b0.y + (bh+gap)*4,                     b0.w,                   bh };
+        SDL_Rect b5{ b0.x,                 b0.y + (bh+gap)*5,                     b0.w,                   bh };
+
+        fill_rect(ren, b0, base); draw_rect(ren, b0, p_border);
+        fill_rect(ren, b1, base); draw_rect(ren, b1, p_border);
+        fill_rect(ren, b2, base); draw_rect(ren, b2, p_border);
+        fill_rect(ren, b3, base); draw_rect(ren, b3, p_border);
+        fill_rect(ren, b4, base); draw_rect(ren, b4, p_border);
+        fill_rect(ren, b5, base); draw_rect(ren, b5, p_border);
+
+        SDL_Color tcol{ 25,25,25,255 };
+        draw_text(ren, font, b0.x + 12, b0.y + 10, "erase all", tcol);
+        draw_text(ren, font, b1.x + 12, b1.y + 10, "stamp", tcol);
+        draw_text(ren, font, b2.x + 12, b2.y + 10, "pen down", tcol);
+        draw_text(ren, font, b3.x + 12, b3.y + 10, "pen up", tcol);
+        draw_text(ren, font, b4.x + 12, b4.y + 10, "set pen color to (pop)", tcol);
+        draw_text(ren, font, b5.x + 12, b5.y + 10, "set pen size to (pop)", tcol);
     }
 }
 

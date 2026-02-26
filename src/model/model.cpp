@@ -9,6 +9,9 @@ void model_init(Project* p) {
     p->active_sprite_index = 0;
     p->dirty = 0;
 
+    // Pen command queue
+    p->pen_cmd_count = 0;
+
     // Sprite 0 defaults
     Sprite* s0 = &p->sprites[0];
     s0->id = 1;
@@ -19,6 +22,13 @@ void model_init(Project* p) {
     s0->size = 100.0;   // percent
     s0->visible = 1;
 
+    // Pen defaults
+    s0->pen_down = 0;
+    s0->pen_size = 4;
+    s0->pen_r = 0;
+    s0->pen_g = 0;
+    s0->pen_b = 0;
+
     // Clear remaining sprite slots (safe defaults)
     for (int i = 1; i < MAX_SPRITES; i++) {
         p->sprites[i].id = 0;
@@ -28,5 +38,11 @@ void model_init(Project* p) {
         p->sprites[i].dir = 90.0;
         p->sprites[i].size = 100.0;
         p->sprites[i].visible = 0;
+
+        p->sprites[i].pen_down = 0;
+        p->sprites[i].pen_size = 4;
+        p->sprites[i].pen_r = 0;
+        p->sprites[i].pen_g = 0;
+        p->sprites[i].pen_b = 0;
     }
 }

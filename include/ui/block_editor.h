@@ -18,6 +18,7 @@ extern "C" {
         CAT_SENSING,
         CAT_OPERATORS,
         CAT_VARIABLES,
+        CAT_PEN,
         CAT_COUNT
     } BlockCategory;
 
@@ -63,6 +64,14 @@ extern "C" {
         BLK_VAR0_READ,
         BLK_VAR0_SET,
         BLK_VAR0_CHANGE,
+
+        // Pen (extension)
+        BLK_PEN_ERASE_ALL,
+        BLK_PEN_STAMP,
+        BLK_PEN_DOWN,
+        BLK_PEN_UP,
+        BLK_PEN_SET_COLOR_POP,
+        BLK_PEN_SET_SIZE_POP,
 
         // Control
         BLK_WAIT_MS,

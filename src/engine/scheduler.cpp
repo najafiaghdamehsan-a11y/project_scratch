@@ -20,6 +20,65 @@ static const Sprite* active_sprite_c(const Project* p) {
     return &p->sprites[i];
 }
 
+// ------------------------------------------------------------
+// Pen extension (Step3): runtime emits draw commands into Project.pen_cmds.
+// UI consumes and renders them to a persistent canvas.
+// ------------------------------------------------------------
+static void pen_push_clear(Project* p) {
+    if (!p) return;
+    if (p->pen_cmd_count >= MAX_PEN_CMDS) return;
+    PenCmd* c = &p->pen_cmds[p->pen_cmd_count++];
+    c->type = PEN_CMD_CLEAR;
+    c->x1 = c->y1 = c->x2 = c->y2 = 0.0;
+    c->r = c->g = c->b = 0;
+    c->size = 0;
+}
+
+static void pen_push_line(Project* p, const Sprite* spr, double x1, double y1, double x2, double y2) {
+    if (!p || !spr) return;
+    if (p->pen_cmd_count >= MAX_PEN_CMDS) return;
+
+    PenCmd* c = &p->pen_cmds[p->pen_cmd_count++];
+    c->type = PEN_CMD_LINE;
+    c->x1 = x1; c->y1 = y1;
+    c->x2 = x2; c->y2 = y2;
+    c->r = spr->pen_r;
+    c->g = spr->pen_g;
+    c->b = spr->pen_b;
+    c->size = spr->pen_size;
+}
+
+static void pen_push_stamp(Project* p, const Sprite* spr) {
+    if (!p || !spr) return;
+    if (p->pen_cmd_count >= MAX_PEN_CMDS) return;
+
+    // Match the simple sprite rendering used in UI: a square with base=30 scaled by sprite.size.
+    // We store the stamp as center (x1,y1) and width/height in stage units (x2,y2).
+    const int base = 30;
+    int sz = (int)(base * (spr->size / 100.0));
+    if (sz < 6) sz = 6;
+
+    PenCmd* c = &p->pen_cmds[p->pen_cmd_count++];
+    c->type = PEN_CMD_STAMP;
+    c->x1 = spr->x;
+    c->y1 = spr->y;
+    c->x2 = (double)sz; // width
+    c->y2 = (double)sz; // height
+    // Border color similar to sprite outline in UI.
+    c->r = 120;
+    c->g = 120;
+    c->b = 120;
+    c->size = 1;
+}
+
+static void pen_maybe_line(Project* p, const Sprite* spr, double ox, double oy) {
+    if (!p || !spr) return;
+    if (!spr->pen_down) return;
+    // Draw only if there was an actual movement.
+    if (spr->x == ox && spr->y == oy) return;
+    pen_push_line(p, spr, ox, oy, spr->x, spr->y);
+}
+
 // RNG
 static uint32_t g_rng = 0x12345678u;
 static uint32_t xorshift32(void) {
@@ -370,21 +429,60 @@ static int step_thread(Scheduler* s, int thread_idx, Thread* t, Project* p, VarS
 
     switch (in.op) {
         // Motion
-        case OP_MOVE_STEPS: if (spr) sprite_move_steps(spr, in.a); return 1;
+        case OP_MOVE_STEPS:
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                sprite_move_steps(spr, in.a);
+                pen_maybe_line(p, spr, ox, oy);
+            }
+            return 1;
         case OP_TURN_DEG:   if (spr) spr->dir = wrap_angle_deg(spr->dir + in.a); return 1;
 
-        case OP_SET_X: if (spr) spr->x = clampd(in.a, -STAGE_HALF_W, STAGE_HALF_W); return 1;
-        case OP_SET_Y: if (spr) spr->y = clampd(in.a, -STAGE_HALF_H, STAGE_HALF_H); return 1;
+        case OP_SET_X:
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                spr->x = clampd(in.a, -STAGE_HALF_W, STAGE_HALF_W);
+                pen_maybe_line(p, spr, ox, oy);
+            }
+            return 1;
+        case OP_SET_Y:
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                spr->y = clampd(in.a, -STAGE_HALF_H, STAGE_HALF_H);
+                pen_maybe_line(p, spr, ox, oy);
+            }
+            return 1;
 
-        case OP_CHANGE_X: if (spr) spr->x = clampd(spr->x + in.a, -STAGE_HALF_W, STAGE_HALF_W); return 1;
-        case OP_CHANGE_Y: if (spr) spr->y = clampd(spr->y + in.a, -STAGE_HALF_H, STAGE_HALF_H); return 1;
+        case OP_CHANGE_X:
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                spr->x = clampd(spr->x + in.a, -STAGE_HALF_W, STAGE_HALF_W);
+                pen_maybe_line(p, spr, ox, oy);
+            }
+            return 1;
+        case OP_CHANGE_Y:
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                spr->y = clampd(spr->y + in.a, -STAGE_HALF_H, STAGE_HALF_H);
+                pen_maybe_line(p, spr, ox, oy);
+            }
+            return 1;
 
         case OP_GOTO_RANDOM:
-            if (spr) { spr->x = rand_range(-STAGE_HALF_W, STAGE_HALF_W); spr->y = rand_range(-STAGE_HALF_H, STAGE_HALF_H); }
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                spr->x = rand_range(-STAGE_HALF_W, STAGE_HALF_W);
+                spr->y = rand_range(-STAGE_HALF_H, STAGE_HALF_H);
+                pen_maybe_line(p, spr, ox, oy);
+            }
             return 1;
 
         case OP_IF_ON_EDGE_BOUNCE:
-            if (spr) sprite_bounce_if_needed(spr);
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                sprite_bounce_if_needed(spr);
+                pen_maybe_line(p, spr, ox, oy);
+            }
             return 1;
 
         // Control
@@ -462,25 +560,41 @@ static int step_thread(Scheduler* s, int thread_idx, Thread* t, Project* p, VarS
 
         case OP_CHANGE_X_POP: {
             double dx = value_as_num(stack_pop_or_num(t, 0));
-            if (spr) spr->x = clampd(spr->x + dx, -STAGE_HALF_W, STAGE_HALF_W);
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                spr->x = clampd(spr->x + dx, -STAGE_HALF_W, STAGE_HALF_W);
+                pen_maybe_line(p, spr, ox, oy);
+            }
             return 1;
         }
 
         case OP_CHANGE_Y_POP: {
             double dy = value_as_num(stack_pop_or_num(t, 0));
-            if (spr) spr->y = clampd(spr->y + dy, -STAGE_HALF_H, STAGE_HALF_H);
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                spr->y = clampd(spr->y + dy, -STAGE_HALF_H, STAGE_HALF_H);
+                pen_maybe_line(p, spr, ox, oy);
+            }
             return 1;
         }
 
         case OP_SET_X_POP: {
             double x = value_as_num(stack_pop_or_num(t, 0));
-            if (spr) spr->x = clampd(x, -STAGE_HALF_W, STAGE_HALF_W);
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                spr->x = clampd(x, -STAGE_HALF_W, STAGE_HALF_W);
+                pen_maybe_line(p, spr, ox, oy);
+            }
             return 1;
         }
 
         case OP_SET_Y_POP: {
             double y = value_as_num(stack_pop_or_num(t, 0));
-            if (spr) spr->y = clampd(y, -STAGE_HALF_H, STAGE_HALF_H);
+            if (spr) {
+                double ox = spr->x, oy = spr->y;
+                spr->y = clampd(y, -STAGE_HALF_H, STAGE_HALF_H);
+                pen_maybe_line(p, spr, ox, oy);
+            }
             return 1;
         }
 
@@ -559,6 +673,37 @@ static int step_thread(Scheduler* s, int thread_idx, Thread* t, Project* p, VarS
                 dist = std::sqrt(dx*dx + dy*dy);
             }
             stack_push(t, value_num(dist));
+            return 1;
+        }
+        // Pen (extension) - Step3: pen down/up + erase all + line drawing on motion
+        case OP_PEN_DOWN:
+            if (spr) spr->pen_down = 1;
+            return 1;
+        case OP_PEN_UP:
+            if (spr) spr->pen_down = 0;
+            return 1;
+        case OP_PEN_ERASE_ALL:
+            pen_push_clear(p);
+            return 1;
+        case OP_PEN_STAMP:
+            if (spr) pen_push_stamp(p, spr);
+            return 1;
+        case OP_PEN_SET_COLOR_POP: {
+            // Interpret the popped number as 0xRRGGBB (integer).
+            // Example: push 16711680 then set color => red.
+            uint32_t rgb = (uint32_t)value_as_num(stack_pop_or_num(t, 0.0));
+            if (spr) {
+                spr->pen_r = (uint8_t)((rgb >> 16) & 0xFF);
+                spr->pen_g = (uint8_t)((rgb >> 8) & 0xFF);
+                spr->pen_b = (uint8_t)((rgb) & 0xFF);
+            }
+            return 1;
+        }
+        case OP_PEN_SET_SIZE_POP: {
+            int sz = (int)value_as_num(stack_pop_or_num(t, 4.0));
+            if (sz < 1) sz = 1;
+            if (sz > 40) sz = 40;
+            if (spr) spr->pen_size = sz;
             return 1;
         }
 

@@ -64,6 +64,14 @@ typedef enum OpCode {
     OP_SET_X_POP,
     OP_SET_Y_POP,
 
+    // Pen (extension) - Step2: opcodes exist; execution implemented later
+    OP_PEN_DOWN,
+    OP_PEN_UP,
+    OP_PEN_ERASE_ALL,
+    OP_PEN_STAMP,
+    OP_PEN_SET_COLOR_POP,
+    OP_PEN_SET_SIZE_POP,
+
     OP_END
 } OpCode;
 
